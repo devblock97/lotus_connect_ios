@@ -36,8 +36,19 @@ public struct AppFeature {
         
         Reduce { state, action in
             switch action {
+            case let .auth(.loginResponse(.success(session))):
+                state.rootTab.settings.currentUser = session.user
+                return .none
+                
+            case let .auth(.sessionRestored(.success(session))):
+                if let session = session {
+                    state.rootTab.settings.currentUser = session.user
+                }
+                return .none
+                
             case .rootTab(.settings(.logoutButtonTapped)), .auth(.logoutCompleted):
                 state.auth.user = nil
+                state.rootTab.settings.currentUser = nil
                 return .none
                 
             default:

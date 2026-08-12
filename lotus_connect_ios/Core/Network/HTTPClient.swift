@@ -64,6 +64,8 @@ public struct HTTPClient: Sendable {
 
 extension HTTPClient: DependencyKey {
     public static let liveValue: HTTPClient = {
+        @Dependency(KeychainClient.self) var keychainClient
+
         let baseURL = URL(string: "https://be10-2001-ee0-1b38-2b4c-2838-129a-ce08-7508.ngrok-free.app/api/v1")!
         
         return HTTPClient(
@@ -73,6 +75,10 @@ extension HTTPClient: DependencyKey {
                 urlRequest.httpMethod = method.rawValue
                 urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+                
+                if let session = try? await keychainClient.loadSession() {
+                    urlRequest.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+                }
                 
                 if let customHeaders = customHeaders {
                     for (key, value) in customHeaders {
@@ -90,6 +96,7 @@ extension HTTPClient: DependencyKey {
                 
                 guard (200...299).contains(httpResponse.statusCode) else {
                     if httpResponse.statusCode == 401 {
+                        try? await keychainClient.clearSession()
                         throw HTTPError.unauthorized
                     }
                     let errorMessage = String(data: data, encoding: .utf8)

@@ -32,7 +32,7 @@ nonisolated private struct LogoutRequestDTO: Encodable, Sendable {
 
 nonisolated private struct EmptyResponseDTO: Decodable, Sendable {}
 
-public struct AuthSession: Equatable, Sendable {
+public struct AuthSession: Equatable, Sendable, Encodable, Decodable {
     public let user: User
     public let accessToken: String
     public let refreshToken: String
@@ -55,6 +55,7 @@ public struct AuthClient: Sendable {
 extension AuthClient: DependencyKey {
     public static let liveValue: AuthClient = {
         @Dependency(\.httpClient) var httpClient
+        @Dependency(KeychainClient.self) var keychainClient
         
         return Self(
             login: { email, password in
@@ -66,11 +67,16 @@ extension AuthClient: DependencyKey {
                     nil
                 )
                 
-                return AuthSession(
+                let session = AuthSession(
                     user: response.user,
                     accessToken: response.accessToken,
                     refreshToken: response.refreshToken
                 )
+                
+                // Save session securely to Keychain
+                try await keychainClient.saveSession(session)
+                
+                return session
             },
             register: { username, email, password, fullName in
                     let dto = RegisterRequestDTO(
@@ -95,9 +101,13 @@ extension AuthClient: DependencyKey {
                     dto,
                     nil
                 )
+                
+                // Clear session from Keychain on logout
+                try await keychainClient.clearSession()
             },
             restoreSession: {
-                nil
+                // Auto-restore session from Keychain on app boot
+                try await keychainClient.loadSession()
             }
         )
     }()

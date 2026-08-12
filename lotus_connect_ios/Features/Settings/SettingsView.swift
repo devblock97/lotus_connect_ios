@@ -22,12 +22,15 @@ import SwiftUI
     
     public enum Action: BindableAction, Equatable {
         case binding(BindingAction<State>)
+        case onAppear
+        case sessionLoaded(User?)
         case loginButtonTapped
         case logoutButtonTapped
         case logoutResponse(TaskResult<Bool>)
     }
     
     @Dependency(\.authClient) var authClient
+    @Dependency(KeychainClient.self) var keychainClient
     
     public init () {}
     
@@ -35,6 +38,20 @@ import SwiftUI
         BindingReducer()
         Reduce { state, action in
             switch action {
+            case .onAppear:
+                // Read saved user profile from Keychain when Settings opens
+                return .run { send in
+                    if let session = try? await keychainClient.loadSession() {
+                        await send(.sessionLoaded(session.user))
+                    } else {
+                        await send(.sessionLoaded(nil))
+                    }
+                }
+                
+            case let .sessionLoaded(user):
+                state.currentUser = user
+                return .none
+                
             case .loginButtonTapped:
                 return .none
                 
@@ -131,5 +148,8 @@ public struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .onAppear {
+            store.send(.onAppear)
+        }
     }
 }
