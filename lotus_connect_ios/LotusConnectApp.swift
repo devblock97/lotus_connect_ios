@@ -16,9 +16,9 @@ import ComposableArchitecture
 struct LotusConnectApp: App {
     /// The root store powering the bottom tab navigation and all sub-features.
     @State private var store = Store(
-        initialState: RootTabFeature.State()
+        initialState: AppFeature.State()
     ) {
-        RootTabFeature()
+        AppFeature()
             #if DEBUG
             // Logs state changes and actions in Xcode Console during development
             ._printChanges()
@@ -27,7 +27,7 @@ struct LotusConnectApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootTabView(store: store)
+            AppView(store: store)
         }
     }
 }
