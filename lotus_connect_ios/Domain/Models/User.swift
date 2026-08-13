@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct User: Identifiable, Equatable, Codable, Sendable {
+nonisolated public struct User: Identifiable, Equatable, Codable, Sendable {
     public let id: String
     public var username: String
     public var email: String
