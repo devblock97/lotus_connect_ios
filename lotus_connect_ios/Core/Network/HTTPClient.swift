@@ -18,7 +18,7 @@ public enum HTTPMethod: String, Sendable {
 }
 
 public enum HTTPError: Error, Equatable, Sendable {
-    case invalidURL(String)
+    case invalidURL
     case badResponse(statusCode: Int, message: String?)
     case unauthorized
     case decodingFailed
@@ -70,8 +70,29 @@ extension HTTPClient: DependencyKey {
         
         return HTTPClient(
             send: { path, method, bodyData, customHeaders in
-                let url = baseURL.appendingPathComponent(path)
-                var urlRequest = URLRequest(url: url)
+                
+                guard var urlComponents = URLComponents(url: baseURL, resolvingAgainstBaseURL: true) else {
+                    throw HTTPError.invalidURL
+                }
+                
+                if let queryIndex = path.firstIndex(of: "?") {
+                    let pathPart = String(path[..<queryIndex])
+                    let queryPart = String(path[path.index(after: queryIndex)...])
+                    
+                    let cleanPathPart = pathPart.hasPrefix("/") ? String(pathPart.dropFirst()) : pathPart
+                    urlComponents.path = (urlComponents.path as NSString).appendingPathComponent(cleanPathPart)
+
+                } else {
+                    let cleanPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+                    urlComponents.path = (urlComponents.path as NSString).appendingPathComponent(cleanPath)
+                }
+                
+                guard let finalURL = urlComponents.url else {
+                    throw HTTPError.invalidURL
+                }
+                
+                
+                var urlRequest = URLRequest(url: finalURL)
                 urlRequest.httpMethod = method.rawValue
                 urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
