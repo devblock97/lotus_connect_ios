@@ -38,6 +38,9 @@ public struct ChatbotFeature {
         case sendButtonTapped
         case quickPromptSelected(String)
         case receiveAssistantResponse(TaskResult<Message>, userMessageId: String)
+        case receiveStreamToken(id: String, token: String)
+        case streamCompleted(id: String)
+        case streamFailed(id: String, error: String)
         case clearHistoryTapped
         case clearHistoryResponse(TaskResult<Bool>)
         case retryTapped(Message)
@@ -82,22 +85,63 @@ public struct ChatbotFeature {
                     status: .sent
                 )
                 
+                let assistantMessageId = uuid().uuidString
+                let assistantMessage = Message(
+                    id: assistantMessageId,
+                    conversationId: "chatbot",
+                    role: .assistant,
+                    content: "",
+                    timestamp: Date(),
+                    status: .streaming
+                )
+
+                
                 state.messages.append(userMessage)
+                state.messages.append(assistantMessage)
                 state.inputText = ""
                 state.isGenerating = true
                 state.errorMessage = nil
                 
+
                 let currentHistory = Array(state.messages)
                 
                 return .run { send in
-                    await send(.receiveAssistantResponse(
-                        TaskResult {
-                            try await chatbotClient.sendPrompt(trimmed, currentHistory)
-                        },
-                        userMessageId: userMessage.id
-                    ))
+                    do {
+                        for try await token in chatbotClient.sendPromptStream(trimmed, currentHistory) {
+                            await send(.receiveStreamToken(id: assistantMessageId, token: token))
+                        }
+                        await send(.streamCompleted(id: assistantMessageId))
+                    } catch {
+                        await send(.streamFailed(id: assistantMessageId, error: error.localizedDescription))
+                    }
                 }
                 
+            case let .receiveStreamToken(id, token):
+                if state.messages[id: id] != nil {
+                    state.messages[id: id]?.content.append(token)
+                    state.messages[id: id]?.status = .streaming
+                }
+                return .none
+                
+            case let .streamCompleted(id):
+                state.isGenerating = false
+                if state.messages[id: id] != nil {
+                    state.messages[id: id]?.status = .sent
+                }
+                return .none
+                
+            case let .streamFailed(id, errorStr):
+                state.isGenerating = false
+                state.errorMessage = "Failed to get AI response: \(errorStr)"
+                if state.messages[id: id] != nil {
+                    state.messages[id: id]?.status = .error
+                    state.messages[id: id]?.isError = true
+                    if state.messages[id: id]?.content.isEmpty == true {
+                        state.messages[id: id]?.content = "Sorry, I couldn't process your request right now. Please try again."
+                    }
+                }
+                return .none
+
             case let .quickPromptSelected(prompt):
                 state.inputText = prompt
                 return .send(.sendButtonTapped)

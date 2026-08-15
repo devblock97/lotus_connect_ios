@@ -71,7 +71,7 @@ nonisolated public struct ChatbotResponseDTO: Decodable, Sendable {
 
 @DependencyClient
 public struct ChatbotClient: Sendable {
-    public var sendPrompt: @Sendable (_ prompt: String, _ history: [Message]) async throws -> Message
+    public var sendPromptStream: @Sendable (_ prompt: String, _ history: [Message]) -> AsyncThrowingStream<String, Error> = { _, _ in .finished() }
     public var fetchHistory: @Sendable () async throws -> [Message]
     public var clearHistory: @Sendable () async throws -> Void
 }
@@ -84,70 +84,59 @@ extension ChatbotClient: DependencyKey {
         let ollamaModel = "llama3" // Default Ollama model (e.g. llama3, mistral, gemma)
         
         return ChatbotClient(
-            sendPrompt: { prompt, history in
-                // Prepare conversation messages for Ollama Chat API
-                var chatMessages: [OllamaChatMessageDTO] = [
-                    OllamaChatMessageDTO(role: "system", content: "You are Lotus AI, a helpful assistant integrated into Lotus Connect.")
-                ]
-                
-                let historyMessages = history.suffix(10).map { msg in
-                    OllamaChatMessageDTO(
-                        role: msg.role == .user ? "user" : "assistant",
-                        content: msg.content
-                    )
-                }
-                chatMessages.append(contentsOf: historyMessages)
-                chatMessages.append(OllamaChatMessageDTO(role: "user", content: prompt))
-                
-                let requestDTO = OllamaChatRequestDTO(model: ollamaModel, messages: chatMessages, stream: false)
-                
-                // Attempt direct request to local Ollama server
-                let ollamaURL = ollamaBaseURL.appendingPathComponent("/api/chat")
-                var request = URLRequest(url: ollamaURL)
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try JSONEncoder().encode(requestDTO)
-                
-                do {
-                    let (data, response) = try await URLSession.shared.data(for: request)
-                    if let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) {
-                        let ollamaResponse = try JSONDecoder().decode(OllamaChatResponseDTO.self, from: data)
-                        let replyText = ollamaResponse.message?.content ?? "No response from Ollama."
+            sendPromptStream: { prompt, history in
+                AsyncThrowingStream { continuation in
+                    Task {
+                        // Prepare conversation messages for Ollama Chat API
+                        var chatMessages: [OllamaChatMessageDTO] = [
+                            OllamaChatMessageDTO(role: "system", content: "You are Lotus AI, a helpful assistant integrated into Lotus Connect.")
+                        ]
                         
-                        return Message(
-                            id: UUID().uuidString,
-                            conversationId: "chatbot",
-                            role: .assistant,
-                            content: replyText,
-                            timestamp: Date(),
-                            isError: false,
-                            status: .sent
-                        )
+                        let historyMessages = history.suffix(10).map { msg in
+                            OllamaChatMessageDTO(
+                                role: msg.role == .user ? "user" : "assistant",
+                                content: msg.content
+                            )
+                        }
+                        chatMessages.append(contentsOf: historyMessages)
+                        chatMessages.append(OllamaChatMessageDTO(role: "user", content: prompt))
+                        
+                        let requestDTO = OllamaChatRequestDTO(model: ollamaModel, messages: chatMessages, stream: true)
+                        // Attempt direct request to local Ollama server
+                        let ollamaURL = ollamaBaseURL.appendingPathComponent("/api/chat")
+                        
+                        var request = URLRequest(url: ollamaURL)
+                        request.httpMethod = "POST"
+                        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                        
+                        do {
+                            request.httpBody = try JSONEncoder().encode(requestDTO)
+                            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                            
+                            guard let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) else {
+                                continuation.finish(throwing: NSError(domain: "OllamaClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid server response"]))
+                                return
+                            }
+                            
+                            // Stream chunk line by line
+                            for try await line in bytes.lines {
+                                guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                                
+                                if let data = line.data(using: .utf8),
+                                   let chunk = try? JSONDecoder().decode(OllamaChatResponseDTO.self, from: data),
+                                   let token = chunk.message?.content, !token.isEmpty {
+                                    continuation.yield(token)
+                                }
+                            }
+                            
+                            continuation.finish()
+                        } catch {
+                            continuation.finish(throwing: error)
+                        }
+                        
+                        throw NSError(domain: "OllamaClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to connect to local Ollama server."])
                     }
-                } catch {
-                    // Fallback to primary backend HTTPClient if local Ollama server is unreachable
-                    let fallbackDTO = ChatbotPromptRequestDTO(
-                        prompt: prompt,
-                        conversationHistory: history.suffix(10).map { ChatbotMessageDTO(role: $0.role.rawValue, content: $0.content) }
-                    )
-                    let backendResp: ChatbotResponseDTO = try await httpClient.request(
-                        "/chatbot/query",
-                        .post,
-                        fallbackDTO,
-                        nil
-                    )
-                    return Message(
-                        id: backendResp.id ?? UUID().uuidString,
-                        conversationId: "chatbot",
-                        role: .assistant,
-                        content: backendResp.reply,
-                        timestamp: Date(),
-                        isError: false,
-                        status: .sent
-                    )
                 }
-                
-                throw NSError(domain: "OllamaClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to connect to local Ollama server."])
             },
             fetchHistory: {
                 return []
