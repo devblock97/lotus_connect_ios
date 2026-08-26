@@ -44,7 +44,7 @@ public struct RootTabView: View {
             .tag(MainTab.contacts)
             // Calls Screen
             NavigationStack {
-                CallsView(store: store.scope(state: \.calls, action: \.calls))
+                NotificationsView(store: store.scope(state: \.notifications, action: \.notifications))
             }
             .tabItem {
                 Label(MainTab.calls.title, systemImage: MainTab.calls.iconName)
