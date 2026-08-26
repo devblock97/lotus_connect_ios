@@ -39,9 +39,13 @@ public struct PrivateChatDetailFeature {
         case deleteMessageTapped(String)
         case messageDeletedResponse(TaskResult<Bool>)
         case typingStatusChanged(Bool)
+        case receiveRealtimeMessage(Message)
+        case receiveTypingStatus(Bool)
     }
     
     @Dependency(\.privateChatClient) var privateChatClient
+    @Dependency(\.privateWebSocketClient) var webSocketClient
+    @Dependency(KeychainClient.self) var keychainClient
     
     public init() {}
     
@@ -53,11 +57,45 @@ public struct PrivateChatDetailFeature {
                 case .onAppear:
                     state.isLoading = true
                     let convId = state.conversation.id
-                    return .run { send in
-                        await send(.messagesLoaded(TaskResult {
-                            try await privateChatClient.fetchMessages(conversationId: convId)
-                        }))
+                    
+                    return .merge(
+                        // Connect WebSocket
+                        .run { _ in
+                            await webSocketClient.connect()
+                            await webSocketClient.joinRoom(convId)
+                        },
+                        
+                        .run { send in
+                            await send(.messagesLoaded(TaskResult {
+                                try await privateChatClient.fetchMessages(convId)
+                            }))
+                        },
+                        
+                        // Listen for new incoming messages (chat:message)
+                        .run { send in
+                            let session = try? await keychainClient.loadSession()
+                            let currentUserId = session?.user.id ?? ""
+                            for await msg in webSocketClient.observeMessage(convId, currentUserId) {
+                                await send(.receiveRealtimeMessage(msg))
+                            }
+                        },
+                        
+                        // Listen for typing status (chat:typing)
+                        .run { send in
+                            for await isTyping in webSocketClient.observeTypingStatus(convId) {
+                                await send(.receiveTypingStatus(isTyping))
+                            }
+                        }
+                    )
+                    
+                    
+                case let .receiveRealtimeMessage(message):
+                    if state.messages[id: message.id] == nil {
+                        state.messages.append(message)
+                        state.isPeerTyping = false
                     }
+                    return .none
+                    
                 case let .messagesLoaded(.success(messages)):
                     state.isLoading = false
                     state.messages = IdentifiedArray(uniqueElements: messages)
@@ -140,13 +178,27 @@ public struct PrivateChatDetailFeature {
                     }
                 case .messageDeletedResponse(.success):
                     return .none
+                    
                 case let .messageDeletedResponse(.failure(error)):
                     state.errorMessage = error.localizedDescription
                     return .none
+                    
                 case let .typingStatusChanged(isTyping):
                     state.isPeerTyping = isTyping
                     return .none
+                    
                 case .binding:
+                    return .none
+                    
+                case let .receiveRealtimeMessage(message):
+                    if state.messages[id: message.id] == nil {
+                        state.messages.append(message)
+                        state.isPeerTyping = false
+                    }
+                    return .none
+                    
+                case let .receiveTypingStatus(isTyping):
+                    state.isPeerTyping = isTyping
                     return .none
                 }
             }
