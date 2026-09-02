@@ -85,7 +85,7 @@ public actor WebSocketActor {
     public func connect() async {
         guard !isConnected else { return }
         let sessionToken = await (try? keychainClient.loadSession())?.accessToken ?? ""
-        guard let url = URL(string: "wss://be10-2001-ee0-1b38-2b4c-2838-129a-ce08-7508.ngrok-free.app/api/v1/ws?token=\(sessionToken)") else { return }
+        guard let url = URL(string: "wss://ef21-2001-ee0-26e-7703-64c2-be98-cc71-71d6.ngrok-free.app/api/v1/ws?token=\(sessionToken)") else { return }
         
         print("[WebSocket] Connecting to topic socket: \(url.absoluteString)")
         let session = URLSession(configuration: .default)
@@ -150,7 +150,7 @@ public actor WebSocketActor {
     }
     
     public func send(event: String, payload: [String: Any]) {
-        let envelope: [String: Any] = ["event": event, "data": payload]
+        let envelope: [String: Any] = ["event": event, "payload": payload]
         if let data = try? JSONSerialization.data(withJSONObject: envelope),
            let jsonString = String(data: data, encoding: .utf8) {
                 print("[WebSocket TX]: \(jsonString)")

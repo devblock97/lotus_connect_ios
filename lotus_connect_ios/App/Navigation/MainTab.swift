@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Symbols
 
 public enum MainTab: String, CaseIterable, Identifiable, Hashable, Sendable {
     case chats
@@ -21,7 +22,7 @@ public enum MainTab: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .chats: return "Chats"
         case .chatbot: return "AI"
         case .contacts: return "Contacts"
-        case .calls: return "Calls"
+        case .calls: return "Alert"
         case .settings: return "Settings"
         }
     }
@@ -29,9 +30,9 @@ public enum MainTab: String, CaseIterable, Identifiable, Hashable, Sendable {
     public var iconName: String {
         switch self {
         case .chats: return "bubble.left.and.bubble.right.fill"
-        case .chatbot: return "sparkles"
+        case .chatbot: return "intelligence.fill"
         case .contacts: return "person.2.fill"
-        case .calls: return "phone.fill"
+        case .calls: return "bell"
         case .settings: return "gearshape.fill"
         }
     }

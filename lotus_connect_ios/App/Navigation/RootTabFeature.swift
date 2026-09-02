@@ -20,6 +20,7 @@ public struct RootTabFeature {
         public var chatbot = ChatbotFeature.State()
         public var contacts = ContactsFeature.State()
         public var calls = CallsFeature.State()
+        public var notifications = NotificationsFeature.State()
         public var settings = SettingsFeature.State()
         
         public init(selectedTab: MainTab = .chats) {
@@ -35,6 +36,7 @@ public struct RootTabFeature {
         case chatList(ChatListFeature.Action)
         case chatbot(ChatbotFeature.Action)
         case contacts(ContactsFeature.Action)
+        case notifications(NotificationsFeature.Action)
         case calls(CallsFeature.Action)
         case settings(SettingsFeature.Action)
     }
@@ -53,6 +55,9 @@ public struct RootTabFeature {
         Scope(state: \.contacts, action: \.contacts) {
             ContactsFeature()
         }
+        Scope(state: \.notifications, action: \.notifications) {
+            NotificationsFeature()
+        }
         Scope(state: \.calls, action: \.calls) {
             CallsFeature()
         }
@@ -66,7 +71,7 @@ public struct RootTabFeature {
                 state.selectedTab = tab
                 return .none
                 
-            case .binding, .chatList, .chatbot, .contacts, .calls, .settings:
+            case .binding, .chatList, .chatbot, .contacts, .calls, .settings, .notifications:
                 return .none
             }
         }
