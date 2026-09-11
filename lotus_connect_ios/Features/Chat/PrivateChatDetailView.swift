@@ -20,7 +20,7 @@ public struct PrivateChatDetailView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
-                        ForEach(store.messages) { message in
+                        ForEach(store.messages.reversed()) { message in
                             PrivateMessageBubble(
                                 message: message,
                                 replyingToMessage: store.messages[id: message.replyToId ?? ""],
