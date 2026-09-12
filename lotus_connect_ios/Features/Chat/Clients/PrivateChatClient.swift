@@ -9,19 +9,61 @@ import Dependencies
 import DependenciesMacros
 import Foundation
 
+nonisolated private struct MediaItemDTO: Decodable, Sendable {
+    let url: String
+    let thumbnailUrl: String?
+    let fileName: String?
+    let fileSize: Int?
+    let mimeType: String?
+    let duration: Double?
+    let width: Double?
+    let height: Double?
+    
+    func toDomain() -> MediaItem {
+        MediaItem(
+            url: url,
+            thumbnailUrl: thumbnailUrl,
+            fileName: fileName,
+            fileSize: fileSize,
+            mimetype: mimeType,
+            duration: duration,
+            width: width,
+            height: height
+        )
+    }
+}
+
+nonisolated private struct MessageReactionDTO: Decodable, Sendable {
+    let reaction: String
+    let count: Int
+    let users: [String]
+    
+    func toDomain() -> MessageReaction {
+        MessageReaction(reaction: reaction, count: count, users: users)
+    }
+}
+
 nonisolated private struct MessageResponseDTO: Decodable, Sendable {
     let id: String
     let conversationId: String
     let senderId: String?
-    let content: String
+    let content: String?
     let messageType: String
     let replyToId: String?
+    let mediaUrl: String?
+    let thumbnailUrl: String?
+    let fileSize: Int?
+    let fileName: String?
+    let mimeType: String?
+    let duration: Double?
+    let mediaItems: [MediaItemDTO]?
+    let reactions: [MessageReactionDTO]?
     let isEdited: Bool?
     let createdAt: String
     let updatedAt: String?
     
     enum CodingKeys: String, CodingKey {
-        case id, content
+        case id, content, duration
         case conversationId = "conversation_id"
         case senderId = "sender_id"
         case messageType = "message_type"
@@ -29,27 +71,43 @@ nonisolated private struct MessageResponseDTO: Decodable, Sendable {
         case isEdited = "is_edited"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case thumbnailUrl = "thumbnail_url"
+        case mediaUrl = "media_url"
+        case fileSize = "file_size"
+        case fileName = "file_name"
+        case mimeType = "mime_type"
+        case mediaItems = "media_items" // Mapped to snake_case from JSON
+        case reactions                  // Added missing key (width & height removed)
     }
     
     func toDomain(currentUserId: String) -> Message {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let timestamp = formatter.date(from: createdAt)
-        ?? ISO8601DateFormatter().date(from: createdAt)
-        ?? Date()
+            ?? ISO8601DateFormatter().date(from: createdAt)
+            ?? Date()
         
-        // Match sender_id UUID with authenticated user ID
         let role: MessageRole = (senderId == currentUserId) ? .user : .assistant
         
         return Message(
             id: id,
             conversationId: conversationId,
             role: role,
-            content: content,
+            content: content ?? "",
             timestamp: timestamp,
             isError: false,
             status: .sent,
-            replyToId: replyToId
+            replyToId: replyToId,
+            messageType: messageType,
+            mediaUrl: mediaUrl,
+            thumbnailUrl: thumbnailUrl,
+            fileSize: fileSize,
+            fileName: fileName,
+            mimeType: mimeType,
+            duration: duration,
+            isEdited: isEdited ?? false,
+            reactions: reactions?.map { $0.toDomain() } ?? [],
+            mediasItems: mediaItems?.map { $0.toDomain() } ?? [],
         )
     }
 }
