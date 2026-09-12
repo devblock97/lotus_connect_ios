@@ -7,6 +7,8 @@
 
 import ComposableArchitecture
 import SwiftUI
+import AVKit
+
 
 public struct PrivateChatDetailView: View {
     @Bindable var store: StoreOf<PrivateChatDetailFeature>
@@ -30,13 +32,22 @@ public struct PrivateChatDetailView: View {
                             )
                             .id(message.id)
                         }
+                        Color.clear
+                            .frame(height: 1)
+                            .id("bottom_anchor")
                     }
                     .padding()
                 }
+                .defaultScrollAnchor(.bottom)
+                .onAppear {
+                    if !store.messages.isEmpty {
+                        proxy.scrollTo("bottom_anchor", anchor: .bottom)
+                    }
+                }
                 .onChange(of: store.messages.count) { _, _ in
-                    if let lastid = store.messages.last?.id {
-                        withAnimation {
-                            proxy.scrollTo(lastid, anchor: .bottom)
+                    if let firstId = store.messages.first?.id {
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            proxy.scrollTo("bottom_anchor", anchor: .bottom)
                         }
                     }
                 }
@@ -198,6 +209,10 @@ struct PrivateMessageBubble: View {
                         .lineLimit(2)
                 }
                 
+                if !message.allMedia.isEmpty {
+                    MediaGridView(mediaItems: message.allMedia)
+                }
+                
                 Text(message.content)
                     .padding(12)
                     .background(isUser ? Color.blue : Color(.systemGray5))
@@ -243,3 +258,282 @@ struct PrivateMessageBubble: View {
         }
     }
 }
+
+struct MediaGridView: View {
+    let mediaItems: [MediaItem]
+    
+    var body: some View {
+        if mediaItems.count == 1, let item = mediaItems.first {
+            SingleMeidaView(item: item)
+                .frame(maxWidth: 240, maxHeight: 280)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 4)], spacing: 4) {
+                ForEach(mediaItems) { item in
+                    SingleMeidaView(item: item)
+                        .frame(width: 110, height: 110)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
+            .frame(maxWidth: 230)
+        }
+    }
+}
+
+struct SingleMeidaView: View {
+    let item: MediaItem
+    @State private var showFullScreen = false
+    
+    var body: some View {
+        ZStack {
+            if item.isVideo && (item.thumbnail == nil || item.thumbnail?.isEmpty == true) {
+                if let videoURL = item.url.asCleanURL {
+                    VideoThumbnailView(videoURL: videoURL)
+                }
+            } else {
+                let targetString = item.thumbnail ?? item.url
+                RemoteThumbnailView(urlString: targetString)
+                
+                if item.isVideo {
+                    ZStack {
+                        Circle()
+                            .fill(Color.black.opacity(0.6))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "play.fill")
+                            .font(.caption.bold())
+                            .foregroundColor(.white)
+                    }
+                }
+            }
+            
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            showFullScreen = true
+        }
+        .fullScreenCover(isPresented: $showFullScreen) {
+            if item.isVideo, let url = URL(string: item.url) {
+                VideoPlayerSheetView(videoURL: url)
+            } else if let url = URL(string: item.url) {
+                FullScreenRemoteImageView(url: url, onDismiss: { showFullScreen = false})
+            }
+        }
+    }
+}
+
+struct RemoteThumbnailView: View {
+    let urlString: String
+    @State private var loadedImage: UIImage?
+    @State private var isLoading = true
+    @State private var hasError = false
+    
+    private static let cache = NSCache<NSString, UIImage>()
+    
+    var body: some View {
+        ZStack {
+            if let image = loadedImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else if isLoading {
+                ZStack {
+                    Color.gray.opacity(0.15)
+                    ProgressView()
+                }
+            } else {
+                ZStack {
+                    Color.gray.opacity(0.15)
+                    Image(systemName: "photo")
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .task(id: urlString) {
+            await loadImage()
+        }
+    }
+    
+    private func loadImage() async {
+        if let cached = Self.cache.object(forKey: urlString as NSString) {
+            self.loadedImage = cached
+            self.isLoading = false
+            return
+        }
+        
+        guard let url = urlString.asCleanURL else {
+            self.isLoading = false
+            self.hasError = true
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.setValue("true", forHTTPHeaderField: "ngrok-skip-browser-warning")
+        request.setValue("image/*", forHTTPHeaderField: "Accept")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse,
+               (200...299).contains(httpResponse.statusCode),
+               let image = UIImage(data: data) {
+                Self.cache.setObject(image, forKey: urlString as NSString)
+                await MainActor.run {
+                    self.loadedImage = image
+                    self.isLoading = false
+                }
+            } else {
+                await MainActor.run {
+                    self.isLoading = false
+                    self.hasError = true
+                }
+            }
+        } catch {
+            await MainActor.run {
+                self.isLoading = false
+                self.hasError = true
+            }
+        }
+    }
+}
+
+struct VideoThumbnailView: View {
+    let videoURL: URL
+    @State private var thumbnailImage: UIImage?
+    @State private var isLoading = true
+    
+    var body: some View {
+        ZStack {
+            if let image = thumbnailImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else if isLoading {
+                ZStack {
+                    Color.black.opacity(0.85)
+                    ProgressView()
+                        .tint(.white)
+                }
+            } else {
+                Color.black.opacity(0.85)
+            }
+            
+            Circle()
+                .fill(Color.black.opacity(0.6))
+                .frame(width: 38, height: 38)
+            
+            Image(systemName: "play.fill")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.white)
+        }
+        .task {
+            await generateThumbnail()
+        }
+    }
+    
+    private func generateThumbnail() async {
+        let asset = AVURLAsset(url: videoURL)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        
+        do {
+            let time = CMTime(seconds: 0.5, preferredTimescale: 600)
+            let cgImage = try await generator.image(at: time).image
+            let uiImage = UIImage(cgImage: cgImage)
+            await MainActor.run {
+                self.thumbnailImage = uiImage
+                self.isLoading = false
+            }
+        } catch {
+            await MainActor.run {
+                self.isLoading = false
+            }
+        }
+    }
+}
+
+public struct VideoPlayerSheetView: View {
+    let videoURL: URL
+    @Environment(\.dismiss) private var dismiss
+    @State private var player: AVPlayer?
+    
+    public init(videoURL: URL) {
+        self.videoURL = videoURL
+    }
+    
+    public var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                
+                if let player = player {
+                    VideoPlayer(player: player)
+                        .ignoresSafeArea()
+                } else {
+                    ProgressView()
+                        .tint(.white)
+                }
+            }
+            .navigationTitle("Video")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Done") {
+                        player?.pause()
+                        dismiss()
+                    }
+                    .foregroundColor(.white)
+                }
+            }
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(Color.black.opacity(0.8), for: .navigationBar)
+            .onAppear {
+                let avPlayer = AVPlayer(url: videoURL)
+                self.player = avPlayer
+                avPlayer.play()
+            }
+            .onDisappear {
+                player?.pause()
+                player = nil
+            }
+        }
+    }
+}
+
+struct FullScreenRemoteImageView: View {
+    let url: URL
+    let onDismiss: () -> Void
+    
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            
+            AsyncImage(url: url) { phase in
+                if case .success(let image) = phase {
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ProgressView()
+                }
+            }
+            
+            Button(action: onDismiss) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title)
+                    .foregroundColor(.white.opacity(0.8))
+                    .padding()
+            }
+        }
+    }
+}
+
+extension String {
+    var asCleanURL: URL? {
+        if let url = URL(string: self) { return url }
+        if let encoded = self.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            return URL(string: encoded)
+        }
+        return nil
+    }
+}
+
