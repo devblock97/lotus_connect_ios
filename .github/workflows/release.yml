@@ -1,0 +1,105 @@
+name: iOS Release & Archive
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: 'Build Configuration'
+        required: true
+        default: 'Release'
+        type: choice
+        options:
+          - Release
+          - Debug
+
+jobs:
+  archive-and-package:
+    name: Archive & Package iOS App
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode Version
+        run: |
+          echo "Checking current default Xcode..."
+          xcodebuild -version || true
+          
+          # If iphoneos SDK is not available in current Xcode, find one that supports it
+          if ! xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
+            echo "Current Xcode does not have iphoneos SDK. Searching for compatible Xcode..."
+            for xc in $(ls -d /Applications/Xcode*.app 2>/dev/null | sort -Vr); do
+              if [ -d "$xc/Contents/Developer/Platforms/iPhoneOS.platform" ]; then
+                echo "Switching to $xc"
+                sudo xcode-select -s "$xc"
+                if xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
+                  break
+                fi
+              fi
+            done
+          fi
+          
+          echo "Active Xcode Version:"
+          xcodebuild -version
+          swift --version
+
+      - name: Cache SwiftPM Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            build/DerivedData/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('lotus_connect_ios.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-
+
+      - name: Enable Swift Macros
+        run: |
+          defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
+
+      - name: Resolve Swift Package Dependencies
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project lotus_connect_ios.xcodeproj \
+            -scheme lotus_connect_ios \
+            -skipMacroValidation
+
+      - name: Archive Application
+        run: |
+          CONFIG="${{ github.event.inputs.configuration || 'Release' }}"
+          mkdir -p build
+          
+          xcodebuild archive \
+            -project lotus_connect_ios.xcodeproj \
+            -scheme lotus_connect_ios \
+            -configuration "$CONFIG" \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/lotus_connect_ios.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            -skipMacroValidation \
+            -quiet
+
+      - name: Compress xcarchive Bundle
+        run: |
+          tar -czf build/lotus_connect_ios.xcarchive.tar.gz -C build lotus_connect_ios.xcarchive
+
+      - name: Upload Archive Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lotus_connect_ios-archive-${{ github.ref_name || github.sha }}
+          path: build/lotus_connect_ios.xcarchive.tar.gz
+          retention-days: 14
+
+      - name: Create GitHub Release (For Tagged Commits)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/lotus_connect_ios.xcarchive.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
