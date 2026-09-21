@@ -17,12 +17,27 @@ public enum HTTPMethod: String, Sendable {
     case patch = "PATCH"
 }
 
-public enum HTTPError: Error, Equatable, Sendable {
+public enum HTTPError: Error, Equatable, Sendable, LocalizedError {
     case invalidURL
     case badResponse(statusCode: Int, message: String?)
     case unauthorized
     case decodingFailed
     case networkError(String)
+    
+    public var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "Invalid URL request."
+        case let .badResponse(statusCode, message):
+            return message ?? "Server returned error with status code \(statusCode)."
+        case .unauthorized:
+            return "Unauthorized session. Please log in again."
+        case .decodingFailed:
+            return "Failed to decode response from server."
+        case let .networkError(message):
+            return message
+        }
+    }
 }
 
 @DependencyClient
@@ -57,6 +72,12 @@ public struct HTTPClient: Sendable {
             decoder.dataDecodingStrategy = .base64
             return try decoder.decode(T.self, from: rawData)
         } catch {
+            #if DEBUG
+            print("❌ [HTTPClient] Decoding failed for \(T.self): \(error)")
+            if let jsonString = String(data: rawData, encoding: .utf8) {
+                print("❌ [HTTPClient] Raw response data: \(jsonString)")
+            }
+            #endif
             throw HTTPError.decodingFailed
         }
     }
@@ -66,7 +87,7 @@ extension HTTPClient: DependencyKey {
     public static let liveValue: HTTPClient = {
         @Dependency(KeychainClient.self) var keychainClient
 
-        let baseURL = URL(string: "https://ef21-2001-ee0-26e-7703-64c2-be98-cc71-71d6.ngrok-free.app/api/v1")!
+        let baseURL = URL(string: "http://localhost:8080/api/v1")!
         
         return HTTPClient(
             send: { path, method, bodyData, customHeaders in

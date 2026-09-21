@@ -10,7 +10,7 @@ import Symbols
 
 public enum MainTab: String, CaseIterable, Identifiable, Hashable, Sendable {
     case chats
-    case chatbot
+    case home
     case contacts
     case calls
     case settings
@@ -19,8 +19,8 @@ public enum MainTab: String, CaseIterable, Identifiable, Hashable, Sendable {
     
     public var title: String {
         switch self {
+        case .home: return "Home"
         case .chats: return "Chats"
-        case .chatbot: return "AI"
         case .contacts: return "Contacts"
         case .calls: return "Alert"
         case .settings: return "Settings"
@@ -29,8 +29,8 @@ public enum MainTab: String, CaseIterable, Identifiable, Hashable, Sendable {
     
     public var iconName: String {
         switch self {
+        case .home: return "house.fill"
         case .chats: return "bubble.left.and.bubble.right.fill"
-        case .chatbot: return "intelligence.fill"
         case .contacts: return "person.2.fill"
         case .calls: return "bell"
         case .settings: return "gearshape.fill"
