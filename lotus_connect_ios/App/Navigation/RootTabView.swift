@@ -17,6 +17,15 @@ public struct RootTabView: View {
     
     public var body: some View {
         TabView(selection: $store.selectedTab.sending(\.tabSelected)) {
+            // Home Screen
+            NavigationStack {
+                HomeView(store: store.scope(state: \.home, action: \.home))
+            }
+            .tabItem {
+                Label(MainTab.home.title, systemImage: MainTab.home.iconName)
+            }
+            .tag(MainTab.home)
+            
             // Chats Screen
             NavigationStack {
                 ChatListView(store: store.scope(state: \.chatList, action: \.chatList))
@@ -26,14 +35,8 @@ public struct RootTabView: View {
             }
             .badge(store.unreadCount > 0 ? "\(store.unreadCount)" : nil)
             .tag(MainTab.chats)
-            // Chatbot Screen
-            NavigationStack {
-                ChatbotView(store: store.scope(state: \.chatbot, action: \.chatbot))
-            }
-            .tabItem {
-                Label(MainTab.chats.title, systemImage: MainTab.chats.iconName)
-            }
-            .tag(MainTab.chatbot)
+            
+            
             // Contacts Screen
             NavigationStack {
                 ContactsView(store: store.scope(state: \.contacts, action: \.contacts))
@@ -42,6 +45,7 @@ public struct RootTabView: View {
                 Label(MainTab.contacts.title, systemImage: MainTab.contacts.iconName)
             }
             .tag(MainTab.contacts)
+            
             // Calls Screen
             NavigationStack {
                 NotificationsView(store: store.scope(state: \.notifications, action: \.notifications))
@@ -50,6 +54,7 @@ public struct RootTabView: View {
                 Label(MainTab.calls.title, systemImage: MainTab.calls.iconName)
             }
             .tag(MainTab.calls)
+            
             // Settings Screen
             NavigationStack {
                 SettingsView(store: store.scope(state: \.settings, action: \.settings))

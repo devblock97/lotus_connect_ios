@@ -16,8 +16,8 @@ public struct RootTabFeature {
         
         public var unreadCount: Int = 3
         
+        public var home = HomeFeature.State()
         public var chatList = ChatListFeature.State()
-        public var chatbot = ChatbotFeature.State()
         public var contacts = ContactsFeature.State()
         public var calls = CallsFeature.State()
         public var notifications = NotificationsFeature.State()
@@ -33,8 +33,8 @@ public struct RootTabFeature {
         case binding(BindingAction<State>)
         case tabSelected(MainTab)
         
+        case home(HomeFeature.Action)
         case chatList(ChatListFeature.Action)
-        case chatbot(ChatbotFeature.Action)
         case contacts(ContactsFeature.Action)
         case notifications(NotificationsFeature.Action)
         case calls(CallsFeature.Action)
@@ -46,11 +46,11 @@ public struct RootTabFeature {
     public var body: some Reducer<State, Action> {
         BindingReducer()
         
+        Scope(state: \.home, action: \.home) {
+            HomeFeature()
+        }
         Scope(state: \.chatList, action: \.chatList) {
             ChatListFeature()
-        }
-        Scope(state: \.chatbot, action: \.chatbot) {
-            ChatbotFeature()
         }
         Scope(state: \.contacts, action: \.contacts) {
             ContactsFeature()
@@ -71,8 +71,9 @@ public struct RootTabFeature {
                 state.selectedTab = tab
                 return .none
                 
-            case .binding, .chatList, .chatbot, .contacts, .calls, .settings, .notifications:
+            case .binding, .home, .chatList, .contacts, .calls, .settings, .notifications:
                 return .none
+                
             }
         }
     }

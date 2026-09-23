@@ -61,6 +61,42 @@ nonisolated public struct MediaItem: Identifiable, Equatable, Codable, Sendable 
         self.width = width
         self.height = height
     }
+    
+    enum CodingKeys: String, CodingKey {
+        case url
+        case thumbnail
+        case thumbnailUrl
+        case fileName
+        case fileSize
+        case mimeType
+        case duration
+        case width
+        case height
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.url = try container.decode(String.self, forKey: .url)
+        self.thumbnail = try container.decodeIfPresent(String.self, forKey: .thumbnailUrl) ?? container.decodeIfPresent(String.self, forKey: .thumbnail)
+        self.fileName = try container.decodeIfPresent(String.self, forKey: .fileName)
+        self.fileSize = try container.decodeIfPresent(Int.self, forKey: .fileSize)
+        self.mimeType = try container.decodeIfPresent(String.self, forKey: .mimeType)
+        self.duration = try container.decodeIfPresent(Double.self, forKey: .duration)
+        self.width = try container.decodeIfPresent(Double.self, forKey: .width)
+        self.height = try container.decodeIfPresent(Double.self, forKey: .height)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(url, forKey: .url)
+        try container.encodeIfPresent(thumbnail, forKey: .thumbnailUrl)
+        try container.encodeIfPresent(fileName, forKey: .fileName)
+        try container.encodeIfPresent(fileSize, forKey: .fileSize)
+        try container.encodeIfPresent(mimeType, forKey: .mimeType)
+        try container.encodeIfPresent(duration, forKey: .duration)
+        try container.encodeIfPresent(width, forKey: .width)
+        try container.encodeIfPresent(height, forKey: .height)
+    }
 }
 
 nonisolated public struct MessageReaction: Equatable, Codable, Sendable {
