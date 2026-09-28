@@ -25,10 +25,9 @@
 
 ## 📱 Screenshots
 
-| Home & Stories (Dark) | Home & Stories (Light) | Authentication |
-|:---:|:---:|:---:|
-| <img src="docs/screenshots/home_screen_dark.png" width="260"/> | <img src="docs/screenshots/home_screen.png" width="260"/> | <img src="docs/screenshots/auth_login.png" width="260"/> |
-
+| Home & Stories (Dark) | Home & Stories (Light) |
+|:---:|:---:|
+| <img src="docs/screenshots/home_screen_dark.png" width="260"/> | <img src="docs/screenshots/home_screen.png" width="260"/> |
 ---
 
 ## 🏗️ Architecture & Tech Stack
@@ -43,7 +42,6 @@ lotus_connect_ios/
 │   ├── Home/             # Stories tray, full-screen story viewer, feed carousels
 │   ├── Chat/             # Real-time message bubbles, WebSockets
 │   ├── ChatList/         # Conversation threads and inbox
-│   ├── Chatbot/          # AI conversational streaming assistant
 │   ├── Contacts/         # Contact directory, pending requests, search
 │   ├── Auth/             # Session restoration, Keychain client, login/signup
 │   └── Notifications/    # Activity and notifications feed
