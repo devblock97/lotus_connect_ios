@@ -8,16 +8,46 @@
 import SwiftUI
 import ComposableArchitecture
 
+// MARK: - Reducer
+
 @Reducer
 public struct ContactsFeature {
     
-    public enum Segment: String, CaseIterable, Identifiable, Equatable {
+    // MARK: - Subtypes
+    
+    public enum Segment: String, CaseIterable, Identifiable, Equatable, Sendable {
         case contacts = "Contacts"
         case requests = "Requests"
         case search = "Search"
         
-        public var id: String { self.rawValue }
+        public var id: String { rawValue }
+        
+        public var iconName: String {
+            switch self {
+            case .contacts: return "person.2.fill"
+            case .requests: return "person.badge.plus"
+            case .search: return "magnifyingglass"
+            }
+        }
     }
+    
+    public struct ContactsError: Error, Equatable, Sendable {
+        public let message: String
+        public init(_ error: Error) {
+            self.message = error.localizedDescription
+        }
+    }
+    
+    public enum AlertAction: Equatable, Sendable {
+        case dismiss
+        case retryInitialLoad
+    }
+    
+    public enum ConfirmationDialogAction: Equatable, Sendable {
+        case confirmRemoveFriend(User)
+    }
+
+    // MARK: - State
     
     @ObservableState
     public struct State: Equatable {
@@ -26,36 +56,43 @@ public struct ContactsFeature {
         public var searchResults: IdentifiedArrayOf<User> = []
         
         public var selectedSegment: Segment = .contacts
-        public var searchText: String = ""
-        
+        public var contactFilterText: String = ""
+        public var globalSearchText: String = ""
         
         public var isLoading: Bool = false
         public var isSearching: Bool = false
-        public var errorMessage: String?
-        public var toastMessage: String?
+        public var pendingActionUserIds: Set<String> = []
+        public var sentRequestUserIds: Set<String> = []
+        
+        @Presents public var alert: AlertState<AlertAction>?
+        @Presents public var confirmationDialog: ConfirmationDialogState<ConfirmationDialogAction>?
         
         public var filteredContacts: [User] {
-            let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if query.isEmpty { return Array(contacts)}
+            let query = contactFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if query.isEmpty { return Array(contacts) }
             return contacts.filter { user in
-                user.username.localizedStandardContains(query) ||
+                user.username.localizedCaseInsensitiveContains(query) ||
                 (user.fullName?.localizedCaseInsensitiveContains(query) ?? false) ||
                 user.email.localizedCaseInsensitiveContains(query)
             }
         }
         
         public var groupedContacts: [(key: String, users: [User])] {
-            let sorted = filteredContacts.sorted { ($0.fullName ?? $0.username) < ($1.fullName ?? $1.username)}
+            let sorted = filteredContacts.sorted {
+                ($0.fullName ?? $0.username).localizedCaseInsensitiveCompare($1.fullName ?? $1.username) == .orderedAscending
+            }
             let grouped = Dictionary(grouping: sorted) { user -> String in
                 let name = user.fullName ?? user.username
                 let firstChar = String(name.prefix(1)).uppercased()
                 return firstChar.rangeOfCharacter(from: .letters) != nil ? firstChar : "#"
             }
-            return grouped.map { (key: $0.key, user: $0.value) }.sorted { $0.key < $1.key }
+            return grouped.map { (key: $0.key, users: $0.value) }.sorted { $0.key < $1.key }
         }
         
         public init() {}
     }
+    
+    // MARK: - Actions
     
     @CasePathable
     public enum Action: BindableAction, Equatable {
@@ -63,21 +100,39 @@ public struct ContactsFeature {
         case onAppear
         case refreshPulled
         case segmentChanged(Segment)
-        case searchDebounced(String)
         
-        case contactsLoaded(TaskResult<[User]>)
-        case pendingRequestsLoaded(TaskResult<[User]>)
-        case searchResultsLoaded(TaskResult<[User]>)
+        // Data Responses
+        case initialDataLoaded(contacts: [User], requests: [User])
+        case initialDataFailed(ContactsError)
+        case searchResultsResponse(Result<[User], ContactsError>)
         
-        case sendRequestTapped(String)
-        case acceptRequestTapped(String)
-        case rejectRequestTapped(String)
-        case removeFriendTapped(String)
+        // User Intents
+        case sendRequestButtonTapped(User)
+        case sendRequestSucceeded(userId: String)
+        case sendRequestFailed(userId: String, error: String)
         
-        case actionSuccess(String)
-        case actionFailure(String)
-        case dismissToast
+        case acceptRequestButtonTapped(User)
+        case acceptRequestSucceeded(userId: String, updatedContacts: [User])
+        case acceptRequestFailed(user: User, index: Int, error: String)
+        
+        case rejectRequestButtonTapped(User)
+        case rejectRequestSucceeded(userId: String)
+        case rejectRequestFailed(user: User, index: Int, error: String)
+        
+        case removeFriendButtonTapped(User)
+        case removeFriendConfirmed(User)
+        case removeFriendSucceeded(userId: String)
+        case removeFriendFailed(user: User, index: Int, error: String)
+        
+        case clearFilterTapped
+        case clearSearchTapped
+        
+        // Presentation
+        case alert(PresentationAction<AlertAction>)
+        case confirmationDialog(PresentationAction<ConfirmationDialogAction>)
     }
+    
+    // MARK: - Dependencies & Reducer
     
     @Dependency(\.contactClient) var contactsClient
     @Dependency(\.continuousClock) var clock
@@ -90,145 +145,272 @@ public struct ContactsFeature {
     
     public var body: some Reducer<State, Action> {
         BindingReducer()
-        Reduce<State, Action> { state, action in // <-- Added <State, Action>
+        Reduce<State, Action> { state, action in
             switch action {
+            // MARK: Lifecycle & Initial Concurrent Loading
             case .onAppear, .refreshPulled:
                 state.isLoading = true
-                state.errorMessage = nil
+                state.alert = nil
                 return .run { send in
-                    await send(.contactsLoaded(TaskResult {
-                        try await contactsClient.fetchContacts()
-                    }))
-                    await send(.pendingRequestsLoaded(TaskResult {
-                        try await contactsClient.fetchPendingRequests()
-                    }))
+                    async let contactsTask = contactsClient.fetchContacts()
+                    async let requestsTask = contactsClient.fetchPendingRequests()
+                    
+                    do {
+                        let (contacts, requests) = try await (contactsTask, requestsTask)
+                        await send(.initialDataLoaded(contacts: contacts, requests: requests))
+                    } catch {
+                        await send(.initialDataFailed(ContactsError(error)))
+                    }
                 }
                 
-            case let .segmentChanged(segment):
-                state.selectedSegment = segment
-                return .none
-                
-            case let .contactsLoaded(.success(users)):
+            case let .initialDataLoaded(contacts, requests):
                 state.isLoading = false
-                state.contacts = IdentifiedArray(uniqueElements: users)
-                return .none
-                
-            case let .contactsLoaded(.failure(error)):
-                state.isLoading = false
-                state.errorMessage = error.localizedDescription
-                return .none
-                
-            case let .pendingRequestsLoaded(.success(requests)):
+                state.contacts = IdentifiedArray(uniqueElements: contacts)
                 state.pendingRequests = IdentifiedArray(uniqueElements: requests)
                 return .none
                 
-            case .pendingRequestsLoaded(.failure):
+            case let .initialDataFailed(error):
+                state.isLoading = false
+                state.alert = AlertState {
+                    TextState("Error")
+                } actions: {
+                    ButtonState(action: .retryInitialLoad) {
+                        TextState("Retry")
+                    }
+                    ButtonState(role: .cancel, action: .dismiss) {
+                        TextState("OK")
+                    }
+                } message: {
+                    TextState(error.message)
+                }
                 return .none
                 
-            case .binding(\.searchText):
-                guard state.selectedSegment == .search else { return .none }
-                let query = state.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            case let .segmentChanged(segment):
+                state.selectedSegment = segment
+                if segment != .search {
+                    return .cancel(id: CancelID.search)
+                }
+                return .none
+                
+            // MARK: Search Debounce & Cancellation
+            case .binding(\.globalSearchText):
+                let query = state.globalSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if query.isEmpty {
                     state.searchResults.removeAll()
+                    state.isSearching = false
                     return .cancel(id: CancelID.search)
                 }
                 state.isSearching = true
                 return .run { [query] send in
                     try await clock.sleep(for: .milliseconds(300))
-                    await send(.searchResultsLoaded(TaskResult {
-                        try await contactsClient.searchUsers(query)
-                    }))
+                    do {
+                        let results = try await contactsClient.searchUsers(query)
+                        await send(.searchResultsResponse(.success(results)))
+                    } catch {
+                        await send(.searchResultsResponse(.failure(ContactsError(error))))
+                    }
                 }
                 .cancellable(id: CancelID.search, cancelInFlight: true)
                 
-            case let .searchResultsLoaded(.success(results)):
+            case let .searchResultsResponse(.success(results)):
                 state.isSearching = false
                 state.searchResults = IdentifiedArray(uniqueElements: results)
                 return .none
                 
-            case let .searchResultsLoaded(.failure(error)):
+            case let .searchResultsResponse(.failure(error)):
                 state.isSearching = false
-                state.errorMessage = error.localizedDescription
+                state.alert = AlertState {
+                    TextState("Search Failed")
+                } actions: {
+                    ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+                } message: {
+                    TextState(error.message)
+                }
                 return .none
                 
-            case let .sendRequestTapped(userId):
+            // MARK: Send Friend Request
+            case let .sendRequestButtonTapped(user):
+                state.pendingActionUserIds.insert(user.id)
                 return .run { send in
                     do {
-                        try await contactsClient.sendFriendRequest(userId)
-                        await send(.actionSuccess("Friend request sent!"))
+                        try await contactsClient.sendFriendRequest(user.id)
+                        await send(.sendRequestSucceeded(userId: user.id))
                     } catch {
-                        await send(.actionFailure(error.localizedDescription))
+                        await send(.sendRequestFailed(userId: user.id, error: error.localizedDescription))
                     }
                 }
                 
-            case let .acceptRequestTapped(userId):
-                state.pendingRequests.remove(id: userId)
+            case let .sendRequestSucceeded(userId):
+                state.pendingActionUserIds.remove(userId)
+                state.sentRequestUserIds.insert(userId)
+                return .none
+                
+            case let .sendRequestFailed(userId, error):
+                state.pendingActionUserIds.remove(userId)
+                state.alert = AlertState {
+                    TextState("Error")
+                } actions: {
+                    ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+                } message: {
+                    TextState("Failed to send request: \(error)")
+                }
+                return .none
+                
+            // MARK: Accept Request (Optimistic with Rollback)
+            case let .acceptRequestButtonTapped(user):
+                guard let existingIndex = state.pendingRequests.index(id: user.id) else { return .none }
+                state.pendingRequests.remove(id: user.id)
+                state.pendingActionUserIds.insert(user.id)
+                
                 return .run { send in
                     do {
-                        try await contactsClient.acceptFriendRequest(userId)
-                        await send(.actionSuccess("Friend request accepted!"))
-                        await send(.refreshPulled)
+                        try await contactsClient.acceptFriendRequest(user.id)
+                        let updatedContacts = try await contactsClient.fetchContacts()
+                        await send(.acceptRequestSucceeded(userId: user.id, updatedContacts: updatedContacts))
                     } catch {
-                        await send(.actionFailure(error.localizedDescription))
+                        await send(.acceptRequestFailed(user: user, index: existingIndex, error: error.localizedDescription))
                     }
                 }
                 
-            case let .rejectRequestTapped(userId):
-                state.pendingRequests.remove(id: userId)
+            case let .acceptRequestSucceeded(userId, updatedContacts):
+                state.pendingActionUserIds.remove(userId)
+                state.contacts = IdentifiedArray(uniqueElements: updatedContacts)
+                return .none
+                
+            case let .acceptRequestFailed(user, index, error):
+                state.pendingActionUserIds.remove(user.id)
+                if index <= state.pendingRequests.count {
+                    state.pendingRequests.insert(user, at: index)
+                } else {
+                    state.pendingRequests.append(user)
+                }
+                state.alert = AlertState {
+                    TextState("Error")
+                } actions: {
+                    ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+                } message: {
+                    TextState("Failed to accept request: \(error)")
+                }
+                return .none
+                
+            // MARK: Reject Request (Optimistic with Rollback)
+            case let .rejectRequestButtonTapped(user):
+                guard let existingIndex = state.pendingRequests.index(id: user.id) else { return .none }
+                state.pendingRequests.remove(id: user.id)
+                state.pendingActionUserIds.insert(user.id)
+                
                 return .run { send in
                     do {
-                        try await contactsClient.rejectFriendRequest(userId)
-                        await send(.actionSuccess("Friend request declined."))
+                        try await contactsClient.rejectFriendRequest(user.id)
+                        await send(.rejectRequestSucceeded(userId: user.id))
                     } catch {
-                        await send(.actionFailure(error.localizedDescription))
+                        await send(.rejectRequestFailed(user: user, index: existingIndex, error: error.localizedDescription))
                     }
                 }
                 
-            case let .removeFriendTapped(userId):
-                state.contacts.remove(id: userId)
+            case let .rejectRequestSucceeded(userId):
+                state.pendingActionUserIds.remove(userId)
+                return .none
+                
+            case let .rejectRequestFailed(user, index, error):
+                state.pendingActionUserIds.remove(user.id)
+                if index <= state.pendingRequests.count {
+                    state.pendingRequests.insert(user, at: index)
+                } else {
+                    state.pendingRequests.append(user)
+                }
+                state.alert = AlertState {
+                    TextState("Error")
+                } actions: {
+                    ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+                } message: {
+                    TextState("Failed to decline request: \(error)")
+                }
+                return .none
+                
+            // MARK: Remove Contact Confirmation & Rollback
+            case let .removeFriendButtonTapped(user):
+                state.confirmationDialog = ConfirmationDialogState {
+                    TextState("Remove Contact")
+                } actions: {
+                    ButtonState(role: .destructive, action: .confirmRemoveFriend(user)) {
+                        TextState("Remove \(user.fullName ?? user.username)")
+                    }
+                    ButtonState(role: .cancel) {
+                        TextState("Cancel")
+                    }
+                } message: {
+                    TextState("Are you sure you want to remove \(user.fullName ?? user.username) from your contacts?")
+                }
+                return .none
+                
+            case let .confirmationDialog(.presented(.confirmRemoveFriend(user))):
+                return .send(.removeFriendConfirmed(user))
+                
+            case let .removeFriendConfirmed(user):
+                guard let existingIndex = state.contacts.index(id: user.id) else { return .none }
+                state.contacts.remove(id: user.id)
+                state.pendingActionUserIds.insert(user.id)
+                
                 return .run { send in
                     do {
-                        try await contactsClient.removeFriend(userId)
-                        await send(.actionSuccess("Contact removed."))
+                        try await contactsClient.removeFriend(user.id)
+                        await send(.removeFriendSucceeded(userId: user.id))
                     } catch {
-                        await send(.actionFailure(error.localizedDescription))
+                        await send(.removeFriendFailed(user: user, index: existingIndex, error: error.localizedDescription))
                     }
                 }
                 
-            case let .actionSuccess(message):
-                state.toastMessage = message
+            case let .removeFriendSucceeded(userId):
+                state.pendingActionUserIds.remove(userId)
                 return .none
                 
-            case let .actionFailure(error):
-                state.errorMessage = error
+            case let .removeFriendFailed(user, index, error):
+                state.pendingActionUserIds.remove(user.id)
+                if index <= state.contacts.count {
+                    state.contacts.insert(user, at: index)
+                } else {
+                    state.contacts.append(user)
+                }
+                state.alert = AlertState {
+                    TextState("Error")
+                } actions: {
+                    ButtonState(role: .cancel, action: .dismiss) { TextState("OK") }
+                } message: {
+                    TextState("Failed to remove contact: \(error)")
+                }
                 return .none
                 
-            case .dismissToast:
-                state.toastMessage = nil
-                state.errorMessage = nil
+            case .clearFilterTapped:
+                state.contactFilterText = ""
                 return .none
                 
-            case .binding, .searchDebounced:
+            case .clearSearchTapped:
+                state.globalSearchText = ""
+                state.searchResults.removeAll()
+                state.isSearching = false
+                return .cancel(id: CancelID.search)
+                
+            // MARK: Presentation Action Handlers
+            case .alert(.presented(.retryInitialLoad)):
+                return .send(.onAppear)
+                
+            case .alert, .confirmationDialog, .binding:
                 return .none
             }
         }
+        .ifLet(\.$alert, action: \.alert)
+        .ifLet(\.$confirmationDialog, action: \.confirmationDialog)
     }
-
 }
-        
+
+// MARK: - Main Contacts View
+
 public struct ContactsView: View {
-    
     @Bindable var store: StoreOf<ContactsFeature>
     
     public init(store: StoreOf<ContactsFeature>) {
         self.store = store
-    }
-    
-    private var selectedSegmentBinding: Binding<ContactsFeature.Segment> {
-        Binding(
-            get: { store.selectedSegment },
-            set: { store.send(.segmentChanged($0)) }
-        )
     }
     
     private func segmentTitle(for segment: ContactsFeature.Segment) -> String {
@@ -239,8 +421,8 @@ public struct ContactsView: View {
     }
     
     public var body: some View {
-        VStack {
-            Picker("Contacts Segment", selection: selectedSegmentBinding) {
+        VStack(spacing: 0) {
+            Picker("Contacts Segment", selection: $store.selectedSegment.sending(\.segmentChanged)) {
                 ForEach(ContactsFeature.Segment.allCases) { segment in
                     Text(segmentTitle(for: segment))
                         .tag(segment)
@@ -258,58 +440,51 @@ public struct ContactsView: View {
                 case .requests:
                     PendingRequestsView(store: store)
                 case .search:
-                    ContentUnavailableView("Search List View", image: "contact.circle.fill")
+                    UserSearchView(store: store)
                 }
             }
         }
         .navigationTitle("Contacts")
         .searchable(
-            text: $store.searchText,
+            text: store.selectedSegment == .search ? $store.globalSearchText : $store.contactFilterText,
             prompt: store.selectedSegment == .search ? "Search users globally..." : "Filter contacts..."
         )
         .onAppear {
             store.send(.onAppear)
         }
-        .alert(
-            "Notice",
-            isPresented: Binding(
-                get: { store.errorMessage != nil || store.toastMessage != nil },
-                set: { _ in store.send(.dismissToast)}
-            ),
-            actions: {
-                Button("OK", role: .cancel) { store.send(.dismissToast)}
-            },
-            message: {
-                Text(errorMessage())
-            }
-        )
-    }
-    
-    private func errorMessage() -> String {
-        return store.errorMessage ?? store.toastMessage ?? ""
+        .alert($store.scope(state: \.alert, action: \.alert))
+        .confirmationDialog($store.scope(state: \.confirmationDialog, action: \.confirmationDialog))
     }
 }
+
+// MARK: - Search View
 
 private struct UserSearchView: View {
     let store: StoreOf<ContactsFeature>
     
     var body: some View {
         Group {
-            if store.isSearching {
+            if store.isSearching && store.searchResults.isEmpty {
                 ProgressView("Searching users...")
-            } else if store.searchResults.isEmpty {
+            } else if store.globalSearchText.isEmpty {
                 ContentUnavailableView(
                     "Search Users",
                     systemImage: "magnifyingglass",
                     description: Text("Type a username or email to find and connect with friends.")
                 )
+            } else if store.searchResults.isEmpty {
+                ContentUnavailableView.search(text: store.globalSearchText)
             } else {
                 List {
                     ForEach(store.searchResults) { user in
+                        let isFriend = store.contacts.contains(where: { $0.id == user.id })
+                        let isRequested = store.sentRequestUserIds.contains(user.id)
+                        let isLoading = store.pendingActionUserIds.contains(user.id)
+                        
                         HStack(spacing: 12) {
                             UserAvatarView(name: user.fullName ?? user.username)
                             
-                            VStack {
+                            VStack(alignment: .leading, spacing: 2) {
                                 Text(user.fullName ?? user.username)
                                     .font(.headline)
                                 Text("@\(user.username)")
@@ -319,14 +494,29 @@ private struct UserSearchView: View {
                             
                             Spacer()
                             
-                            Button {
-                                store.send(.sendRequestTapped(user.id))
-                            } label: {
-                                Label("Add", systemImage: "person.badge.plus")
-                                    .font(.subheadline.bold())
+                            if isFriend {
+                                Label("Friend", systemImage: "checkmark.circle.fill")
+                                    .font(.subheadline)
+                                    .foregroundColor(.green)
+                            } else if isRequested {
+                                Label("Sent", systemImage: "clock.fill")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Button {
+                                    store.send(.sendRequestButtonTapped(user))
+                                } label: {
+                                    if isLoading {
+                                        ProgressView().scaleEffect(0.8)
+                                    } else {
+                                        Label("Add", systemImage: "person.badge.plus")
+                                            .font(.subheadline.bold())
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .buttonBorderShape(.capsule)
+                                .disabled(isLoading)
                             }
-                            .buttonStyle(.borderedProminent)
-                            .buttonBorderShape(.capsule)
                         }
                         .padding(.vertical, 4)
                     }
@@ -337,6 +527,8 @@ private struct UserSearchView: View {
     }
 }
 
+// MARK: - Contacts List View
+
 private struct ContactsListView: View {
     let store: StoreOf<ContactsFeature>
     
@@ -344,12 +536,14 @@ private struct ContactsListView: View {
         Group {
             if store.isLoading && store.contacts.isEmpty {
                 ProgressView("Loading contacts...")
-            } else if store.filteredContacts.isEmpty {
+            } else if store.contacts.isEmpty {
                 ContentUnavailableView(
-                    "No Contacts Found",
+                    "No Contacts",
                     systemImage: "person.crop.rectangle.stack",
-                    description: Text("Add new friends using the Find People tab.")
+                    description: Text("Your contact list is empty.")
                 )
+            } else if store.filteredContacts.isEmpty {
+                ContentUnavailableView.search(text: store.contactFilterText)
             } else {
                 List {
                     ForEach(store.groupedContacts, id: \.key) { section in
@@ -358,7 +552,7 @@ private struct ContactsListView: View {
                                 ContactRowView(user: user)
                                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                         Button(role: .destructive) {
-                                            store.send(.removeFriendTapped(user.id))
+                                            store.send(.removeFriendButtonTapped(user))
                                         } label: {
                                             Label("Remove", systemImage: "person.slash.fill")
                                         }
@@ -376,6 +570,8 @@ private struct ContactsListView: View {
     }
 }
 
+// MARK: - Pending Requests View
+
 private struct PendingRequestsView: View {
     let store: StoreOf<ContactsFeature>
     
@@ -390,6 +586,8 @@ private struct PendingRequestsView: View {
             } else {
                 List {
                     ForEach(store.pendingRequests) { user in
+                        let isLoading = store.pendingActionUserIds.contains(user.id)
+                        
                         HStack(spacing: 12) {
                             UserAvatarView(name: user.fullName ?? user.username)
                             
@@ -403,24 +601,28 @@ private struct PendingRequestsView: View {
                             
                             Spacer()
                             
-                            HStack(spacing: 8) {
-                                Button {
-                                    store.send(.acceptRequestTapped(user.id))
-                                } label: {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.title2)
-                                        .foregroundColor(.green)
+                            if isLoading {
+                                ProgressView()
+                            } else {
+                                HStack(spacing: 8) {
+                                    Button {
+                                        store.send(.acceptRequestButtonTapped(user))
+                                    } label: {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.title2)
+                                            .foregroundColor(.green)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    
+                                    Button {
+                                        store.send(.rejectRequestButtonTapped(user))
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.title2)
+                                            .foregroundColor(.red)
+                                    }
+                                    .buttonStyle(.borderless)
                                 }
-                                .buttonStyle(.borderless)
-                                
-                                Button {
-                                    store.send(.rejectRequestTapped(user.id))
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.title2)
-                                        .foregroundColor(.red)
-                                }
-                                .buttonStyle(.borderless)
                             }
                         }
                         .padding(.vertical, 4)
@@ -431,6 +633,8 @@ private struct PendingRequestsView: View {
         }
     }
 }
+
+// MARK: - Row Subviews
 
 private struct ContactRowView: View {
     let user: User
