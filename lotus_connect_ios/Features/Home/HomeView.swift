@@ -69,21 +69,143 @@ public struct HomeView: View {
         self.store = store
     }
     
+    @State private var storyGroups: [UserStoryGroup] = [
+        UserStoryGroup(
+            username: "Your story",
+            avatarUrl: nil,
+            stories: [],
+            isSeen: false,
+            isCurrentUser: true
+        ),
+        UserStoryGroup(
+            username: "nnthong",
+            avatarUrl: nil,
+            stories: [
+                StoryItem(
+                    mediaUrl: "https://images.unsplash.com/photo-1518770660439-4636190af475?w=800&auto=format&fit=crop&q=80",
+                    caption: "iOS Engineering Mode 💻⚡️",
+                    timeAgo: "2h",
+                    gradientColors: [.purple, .indigo]
+                )
+            ],
+            isSeen: false
+        ),
+        UserStoryGroup(
+            username: "marvel",
+            avatarUrl: nil,
+            stories: [
+                StoryItem(
+                    mediaUrl: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=800&auto=format&fit=crop&q=80",
+                    caption: "New Avengers Teaser 💥🛡️",
+                    timeAgo: "3h",
+                    gradientColors: [.red, .orange]
+                )
+            ],
+            isSeen: false
+        ),
+        UserStoryGroup(
+            username: "thekamraan",
+            avatarUrl: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80",
+            stories: [
+                StoryItem(
+                    caption: "Architecture & Design 🏛️☕️",
+                    timeAgo: "4h",
+                    gradientColors: [.indigo, .blue]
+                )
+            ],
+            isSeen: false
+        ),
+        UserStoryGroup(
+            username: "tva_official",
+            avatarUrl: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&auto=format&fit=crop&q=80",
+            stories: [
+                StoryItem(
+                    caption: "For all time. Always. ⏳",
+                    timeAgo: "7h",
+                    gradientColors: [.brown, .orange]
+                )
+            ],
+            isSeen: false
+        )
+    ]
+    
+    @State private var selectedGroupIndex: Int = 0
+    @State private var isViewerPresented: Bool = false
+    
+    private var activeFeeds: [Post] {
+        store.feeds.isEmpty ? [] : Array(store.feeds)
+    }
+    
     public var body: some View {
-        ZStack {
-            if store.isLoading && store.feeds.isEmpty {
-                ProgressView("Loading Feed...")
-            } else if store.feeds.isEmpty {
-                EmptyView()
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(store.feeds) { feed in
-                                PostCardView(post: feed)
+        VStack(spacing: 0) {
+            // MARK: - Top Header (Lotus Connect serif + Heart & Direct icons)
+            HStack(alignment: .center) {
+                Text("Lotus Connect")
+                    .font(.system(size: 26, weight: .bold, design: .serif))
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                HStack(spacing: 20) {
+                    Button {
+                        // Activity / notifications
+                    } label: {
+                        Image(systemName: "heart")
+                            .font(.system(size: 22, weight: .regular))
+                            .foregroundColor(.primary)
+                    }
+                    
+                    Button {
+                        // Messages / direct
+                    } label: {
+                        Image(systemName: "paperplane")
+                            .font(.system(size: 21, weight: .regular))
+                            .foregroundColor(.primary)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+            .padding(.bottom, 6)
+            
+            // MARK: - Main Scroll Feed
+            ScrollView {
+                LazyVStack(spacing: 16) {
+                    // Stories Tray Row
+                    StoriesTrayView(
+                        storyGroups: $storyGroups,
+                        onSelectGroup: { group in
+                            if let index = storyGroups.firstIndex(where: { $0.id == group.id }) {
+                                selectedGroupIndex = index
+                                isViewerPresented = true
+                            }
+                        },
+                        onAddStoryTapped: {
+                            print("Open camera to add story")
+                        }
+                    )
+                    
+                    if store.isLoading && store.feeds.isEmpty {
+                        ProgressView("Loading Feed...")
+                            .padding(.vertical, 32)
+                    } else {
+                        // Posts List
+                        ForEach(activeFeeds) { post in
+                            PostCardView(post: post)
                         }
                     }
                 }
             }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .fullScreenCover(isPresented: $isViewerPresented) {
+            StoryViewerModal(
+                storyGroups: $storyGroups,
+                initialGroupIndex: selectedGroupIndex,
+                onDismiss: {
+                    isViewerPresented = false
+                }
+            )
         }
         .onAppear {
             self.store.send(.onAppear)
@@ -91,120 +213,233 @@ public struct HomeView: View {
     }
 }
 
+// MARK: - Post Card View (Matching Instagram & Android PostCard.kt)
+
 struct PostCardView: View {
     let post: Post
     
+    @State private var currentImageIndex: Int = 0
+    @State private var isLiked: Bool = false
+    @State private var isBookmarked: Bool = false
+    @State private var likeCount: Int
+    
+    init(post: Post) {
+        self.post = post
+        self._likeCount = State(initialValue: post.likeCount)
+        self._isLiked = State(initialValue: post.userHasLiked)
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            
-            HStack {
-                if post.author.avatarUrl == nil {
-                    Image(systemName: "person.crop.circle")
-                        .resizable()
-                        .frame(width: 40, height: 40)
-                        .clipShape(Circle())
+            // MARK: - Author Header Row
+            HStack(spacing: 10) {
+                // Author Avatar
+                if let avatarUrl = post.author.avatarUrl, let url = URL(string: avatarUrl) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        default:
+                            fallbackAuthorAvatar
+                        }
+                    }
+                    .frame(width: 38, height: 38)
+                    .clipShape(Circle())
                 } else {
-                    
-                    Image(post.author.avatarUrl ??  "")
-                        .resizable()
-                        .frame(width: 40, height: 40)
-                        .clipShape(Circle())
+                    fallbackAuthorAvatar
                 }
                 
-                Text(post.author.fullName ?? post.author.username)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+                // Username & Full Name
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(post.author.username)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.primary)
+                    
+                    if let fullName = post.author.fullName, !fullName.isEmpty {
+                        Text(fullName)
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundColor(.secondary)
+                    }
+                }
                 
                 Spacer()
                 
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 16, weight: .semibold))
+                Button {
+                    // Post options menu
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .rotationEffect(.degrees(90))
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.primary)
+                        .padding(6)
+                }
             }
-            .padding(.horizontal)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
             
+            // MARK: - Media Carousel
             if !post.mediaItems.isEmpty {
-                ScrollView(.horizontal, showsIndicators: true, ) {
-                    LazyHStack(spacing: 12) {
-                        ForEach(post.mediaItems) { media in
+                ZStack(alignment: .topTrailing) {
+                    TabView(selection: $currentImageIndex) {
+                        ForEach(Array(post.mediaItems.enumerated()), id: \.element.id) { index, media in
                             if let url = URL(string: media.url) {
                                 AsyncImage(url: url) { phase in
                                     switch phase {
-                                    case .empty:
-                                        ProgressView()
                                     case .success(let image):
                                         image
                                             .resizable()
-                                            .aspectRatio(contentMode: .fit)
-                                            .frame(maxWidth: .infinity, maxHeight: 250)
-                                            .clipped()
+                                            .scaledToFill()
                                     case .failure:
-                                        Image(systemName: "photo")
-                                    @unknown default:
-                                        EmptyView()
+                                        ZStack {
+                                            Color(uiColor: .secondarySystemBackground)
+                                            Image(systemName: "photo")
+                                                .font(.largeTitle)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    default:
+                                        ZStack {
+                                            Color(uiColor: .secondarySystemBackground)
+                                            ProgressView()
+                                        }
                                     }
                                 }
+                                .tag(index)
                             }
                         }
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    .aspectRatio(1.0, contentMode: .fit)
+                    .clipped()
+                    
+                    // Top-right counter pill: "1/4"
+                    if post.mediaItems.count > 1 {
+                        Text("\(currentImageIndex + 1)/\(post.mediaItems.count)")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 4.5)
+                            .background(Capsule().fill(Color.black.opacity(0.65)))
+                            .padding(12)
                     }
                 }
             }
             
-            HStack(spacing: 16) {
-                Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) {
-                        
+            // MARK: - Action Buttons Row (Heart, Comment, Share, Dots, Bookmark)
+            HStack(alignment: .center) {
+                // Left Actions
+                HStack(spacing: 16) {
+                    Button {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) {
+                            isLiked.toggle()
+                            likeCount += isLiked ? 1 : -1
+                        }
+                    } label: {
+                        Image(systemName: isLiked ? "heart.fill" : "heart")
+                            .foregroundColor(isLiked ? .red : .primary)
+                            .scaleEffect(isLiked ? 1.08 : 1.0)
                     }
-                } label: {
-                    Image(systemName: "heart")
-                        .foregroundColor(.primary)
-                }
-                
-                Button {
                     
-                } label: {
-                    Image(systemName: "bubble.right")
-                }
-                
-                Button {
+                    Button {
+                        // Comments action
+                    } label: {
+                        Image(systemName: "bubble.right")
+                            .foregroundColor(.primary)
+                    }
                     
-                } label: {
-                    Image(systemName: "paperplane")
+                    Button {
+                        // Share action
+                    } label: {
+                        Image(systemName: "paperplane")
+                            .foregroundColor(.primary)
+                    }
                 }
                 
                 Spacer()
                 
+                // Center Pagination Dots (matching Instagram)
+                if post.mediaItems.count > 1 {
+                    HStack(spacing: 4.5) {
+                        ForEach(0..<post.mediaItems.count, id: \.self) { index in
+                            Circle()
+                                .fill(
+                                    currentImageIndex == index
+                                        ? Color(red: 0.0, green: 0.58, blue: 0.98) // Instagram Blue
+                                        : Color.gray.opacity(0.4)
+                                )
+                                .frame(
+                                    width: currentImageIndex == index ? 6.5 : 5.0,
+                                    height: currentImageIndex == index ? 6.5 : 5.0
+                                )
+                        }
+                    }
+                }
+                
+                Spacer()
+                
+                // Right Bookmark Button
                 Button {
-                    withAnimation {}
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isBookmarked.toggle()
+                    }
                 } label: {
-                    Image(systemName: "bookmark.fill")
+                    Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
+                        .foregroundColor(.primary)
                 }
             }
-            .font(.system(size: 22))
-            .padding(.horizontal)
+            .font(.system(size: 21))
+            .padding(.horizontal, 14)
             .padding(.top, 10)
+            .padding(.bottom, 6)
             
-            Text("Like by **\(post.author.username) ** and **\(post.likeCount.formatted()) others**")
-                .font(.subheadline)
-                .padding(.horizontal)
-                .padding(.top, 6)
+            // MARK: - Likes Count
+            Text("\(likeCount) likes")
+                .font(.system(size: 13.5, weight: .bold))
+                .foregroundColor(.primary)
+                .padding(.horizontal, 14)
+                .padding(.top, 2)
             
-            (
-                Text(post.author.username).fontWeight(.semibold)
-                + Text(" " + post.content)
-            )
-            .font(.subheadline)
-            .padding(.horizontal)
-            .padding(.top, 4)
-            .lineLimit(2)
+            // MARK: - Post Caption
+            if !post.content.isEmpty {
+                Text("**\(post.author.username)** \(post.content)")
+                    .font(.system(size: 13.5))
+                    .foregroundColor(.primary)
+                    .lineLimit(3)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 3)
+            }
             
-            
-            Text("View all \(post.commentCount) comments")
-                .font(.subheadline)
-                .foregroundColor(.gray)
-                .padding(.horizontal)
-                .padding(.top, 4)
+            // MARK: - Comments Link
+            if post.commentCount > 0 {
+                Button {
+                    // Open comments
+                } label: {
+                    Text("View all \(post.commentCount) comments")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 3)
                 .padding(.bottom, 10)
+            }
         }
+    }
+    
+    // Fallback author avatar badge (purple gradient with initials JN)
+    private var fallbackAuthorAvatar: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(red: 0.45, green: 0.25, blue: 0.95), Color(red: 0.20, green: 0.45, blue: 0.95)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            
+            Text(String(post.author.username.prefix(2)).uppercased())
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+        }
+        .frame(width: 38, height: 38)
+        .clipShape(Circle())
     }
 }
