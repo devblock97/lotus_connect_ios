@@ -12,7 +12,7 @@ import Foundation
 public struct RootTabFeature {
     @ObservableState
     public struct State: Equatable {
-        public var selectedTab: MainTab = .chats
+        public var selectedTab: MainTab = .home
         
         public var unreadCount: Int = 3
         
@@ -23,7 +23,7 @@ public struct RootTabFeature {
         public var notifications = NotificationsFeature.State()
         public var settings = SettingsFeature.State()
         
-        public init(selectedTab: MainTab = .chats) {
+        public init(selectedTab: MainTab = .home) {
             self.selectedTab = selectedTab
         }
     }
