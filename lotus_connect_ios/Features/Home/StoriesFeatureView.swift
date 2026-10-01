@@ -8,55 +8,6 @@
 import SwiftUI
 import Combine
 
-// MARK: - Models
-
-public struct StoryItem: Identifiable, Equatable {
-    public let id: String
-    public let mediaUrl: String?
-    public let caption: String?
-    public let timeAgo: String
-    public let gradientColors: [Color]
-    
-    public init(
-        id: String = UUID().uuidString,
-        mediaUrl: String? = nil,
-        caption: String? = nil,
-        timeAgo: String = "2h",
-        gradientColors: [Color] = [.purple, .indigo]
-    ) {
-        self.id = id
-        self.mediaUrl = mediaUrl
-        self.caption = caption
-        self.timeAgo = timeAgo
-        self.gradientColors = gradientColors
-    }
-}
-
-public struct UserStoryGroup: Identifiable, Equatable {
-    public let id: String
-    public let username: String
-    public let avatarUrl: String?
-    public var stories: [StoryItem]
-    public var isSeen: Bool
-    public let isCurrentUser: Bool
-    
-    public init(
-        id: String = UUID().uuidString,
-        username: String,
-        avatarUrl: String? = nil,
-        stories: [StoryItem] = [],
-        isSeen: Bool = false,
-        isCurrentUser: Bool = false
-    ) {
-        self.id = id
-        self.username = username
-        self.avatarUrl = avatarUrl
-        self.stories = stories
-        self.isSeen = isSeen
-        self.isCurrentUser = isCurrentUser
-    }
-}
-
 // MARK: - Design Tokens & Colors
 
 public struct StoryColors {
@@ -82,6 +33,16 @@ public struct StoryColors {
     )
     
     public static let instagramBlue = Color(red: 0.0, green: 0.58, blue: 0.98)
+    
+    /// Vibrant green gradient for Close Friends stories
+    public static let closeFriendsGradient = LinearGradient(
+        colors: [
+            Color(red: 0.10, green: 0.82, blue: 0.35),
+            Color(red: 0.32, green: 0.98, blue: 0.48)
+        ],
+        startPoint: .bottomLeading,
+        endPoint: .topTrailing
+    )
     
     /// Deterministic modern gradient for initial avatars
     public static func avatarGradient(for name: String) -> [Color] {
@@ -114,6 +75,7 @@ public struct StoryAvatarView: View {
     public let avatarUrl: String?
     public let isSeen: Bool
     public let hasRing: Bool
+    public var isCloseFriends: Bool
     public var size: CGFloat = 68
     
     private var avatarSize: CGFloat {
@@ -125,12 +87,14 @@ public struct StoryAvatarView: View {
         avatarUrl: String? = nil,
         isSeen: Bool = false,
         hasRing: Bool = true,
+        isCloseFriends: Bool = false,
         size: CGFloat = 68
     ) {
         self.username = username
         self.avatarUrl = avatarUrl
         self.isSeen = isSeen
         self.hasRing = hasRing
+        self.isCloseFriends = isCloseFriends
         self.size = size
     }
     
@@ -139,7 +103,7 @@ public struct StoryAvatarView: View {
             if hasRing {
                 Circle()
                     .stroke(
-                        isSeen ? StoryColors.seenGradient : StoryColors.instagramGradient,
+                        isSeen ? StoryColors.seenGradient : (isCloseFriends ? StoryColors.closeFriendsGradient : StoryColors.instagramGradient),
                         lineWidth: 2.2
                     )
                     .frame(width: size, height: size)
@@ -188,7 +152,7 @@ public struct StoryAvatarView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
-        } else if nameLower == "nnthong" || nameLower.contains("story") {
+        } else if nameLower.contains("story") {
             ZStack {
                 Color(white: 0.15)
                 Image(systemName: "person.fill")
@@ -214,16 +178,26 @@ public struct StoryAvatarView: View {
 // MARK: - Stories Horizontal Tray
 
 public struct StoriesTrayView: View {
-    @Binding public var storyGroups: [UserStoryGroup]
-    public let onSelectGroup: (UserStoryGroup) -> Void
+    public let storyGroups: [UserStory]
+    public let onSelectGroup: (UserStory) -> Void
     public let onAddStoryTapped: () -> Void
     
     public init(
-        storyGroups: Binding<[UserStoryGroup]>,
-        onSelectGroup: @escaping (UserStoryGroup) -> Void,
+        storyGroups: [UserStory],
+        onSelectGroup: @escaping (UserStory) -> Void,
         onAddStoryTapped: @escaping () -> Void
     ) {
-        self._storyGroups = storyGroups
+        self.storyGroups = storyGroups
+        self.onSelectGroup = onSelectGroup
+        self.onAddStoryTapped = onAddStoryTapped
+    }
+    
+    public init(
+        storyGroups: Binding<[UserStory]>,
+        onSelectGroup: @escaping (UserStory) -> Void,
+        onAddStoryTapped: @escaping () -> Void
+    ) {
+        self.storyGroups = storyGroups.wrappedValue
         self.onSelectGroup = onSelectGroup
         self.onAddStoryTapped = onAddStoryTapped
     }
@@ -232,7 +206,7 @@ public struct StoriesTrayView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 14) {
                 // Current User "Your Story" Item
-                if let currentUser = storyGroups.first(where: { $0.isCurrentUser }) {
+                if let currentUser = storyGroups.first(where: { $0.isSelf }) {
                     CurrentUserStoryTrayItem(
                         group: currentUser,
                         onTap: {
@@ -247,7 +221,7 @@ public struct StoriesTrayView: View {
                 }
                 
                 // Friends' Story Items
-                ForEach(storyGroups.filter { !$0.isCurrentUser }) { group in
+                ForEach(storyGroups.filter { !$0.isSelf }) { group in
                     FriendStoryTrayItem(group: group) {
                         onSelectGroup(group)
                     }
@@ -264,7 +238,7 @@ public struct StoriesTrayView: View {
 // MARK: - Current User Tray Item
 
 private struct CurrentUserStoryTrayItem: View {
-    let group: UserStoryGroup
+    let group: UserStory
     let onTap: () -> Void
     let onAddTapped: () -> Void
     
@@ -277,10 +251,11 @@ private struct CurrentUserStoryTrayItem: View {
             VStack(spacing: 5) {
                 ZStack(alignment: .bottomTrailing) {
                     StoryAvatarView(
-                        username: group.username,
-                        avatarUrl: group.avatarUrl,
-                        isSeen: group.isSeen,
+                        username: group.user.username,
+                        avatarUrl: group.user.avatarUrl,
+                        isSeen: !group.hasUnseen,
                         hasRing: hasActiveStory,
+                        isCloseFriends: group.hasCloseFriendsStory,
                         size: 68
                     )
                     
@@ -316,21 +291,22 @@ private struct CurrentUserStoryTrayItem: View {
 // MARK: - Friend Tray Item
 
 private struct FriendStoryTrayItem: View {
-    let group: UserStoryGroup
+    let group: UserStory
     let onTap: () -> Void
     
     var body: some View {
         Button(action: onTap) {
             VStack(spacing: 5) {
                 StoryAvatarView(
-                    username: group.username,
-                    avatarUrl: group.avatarUrl,
-                    isSeen: group.isSeen,
+                    username: group.user.username,
+                    avatarUrl: group.user.avatarUrl,
+                    isSeen: !group.hasUnseen,
                     hasRing: true,
+                    isCloseFriends: group.hasCloseFriendsStory,
                     size: 68
                 )
                 
-                Text(group.username)
+                Text(group.user.username)
                     .font(.system(size: 11.5, weight: .regular))
                     .foregroundColor(.primary)
                     .frame(width: 74)
@@ -344,9 +320,10 @@ private struct FriendStoryTrayItem: View {
 // MARK: - Fullscreen Story Viewer (Instagram-Grade Modal Player)
 
 public struct StoryViewerModal: View {
-    @Binding public var storyGroups: [UserStoryGroup]
+    public let storyGroups: [UserStory]
     public let initialGroupIndex: Int
     public let onDismiss: () -> Void
+    public var onMarkAsSeen: ((UserStory) -> Void)? = nil
     
     @State private var currentGroupIndex: Int = 0
     @State private var currentStoryIndex: Int = 0
@@ -357,26 +334,46 @@ public struct StoryViewerModal: View {
     @State private var floatingHearts: [FloatingHeart] = []
     @State private var dragOffset: CGSize = .zero
     
-    // Timer configuration (5 seconds per story)
-    private let storyDuration: Double = 5.0
+    // Per-story dynamic duration (defaults to 5s if not specified)
+    private var currentStoryDuration: Double {
+        guard let story = currentStory, story.duration > 0 else { return 5.0 }
+        return story.duration
+    }
     private let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
     
     public init(
-        storyGroups: Binding<[UserStoryGroup]>,
+        storyGroups: [UserStory],
+        initialGroupIndex: Int,
+        onDismiss: @escaping () -> Void,
+        onMarkAsSeen: ((UserStory) -> Void)? = nil
+    ) {
+        self.storyGroups = storyGroups
+        self.initialGroupIndex = initialGroupIndex
+        self.onDismiss = onDismiss
+        self.onMarkAsSeen = onMarkAsSeen
+    }
+    
+    public init(
+        storyGroups: Binding<[UserStory]>,
         initialGroupIndex: Int,
         onDismiss: @escaping () -> Void
     ) {
-        self._storyGroups = storyGroups
+        self.storyGroups = storyGroups.wrappedValue
         self.initialGroupIndex = initialGroupIndex
         self.onDismiss = onDismiss
+        self.onMarkAsSeen = { group in
+            if let idx = storyGroups.wrappedValue.firstIndex(where: { $0.id == group.id }) {
+                storyGroups.wrappedValue[idx].hasUnseen = false
+            }
+        }
     }
     
-    private var currentGroup: UserStoryGroup? {
+    private var currentGroup: UserStory? {
         guard currentGroupIndex >= 0 && currentGroupIndex < storyGroups.count else { return nil }
         return storyGroups[currentGroupIndex]
     }
     
-    private var currentStory: StoryItem? {
+    private var currentStory: Story? {
         guard let group = currentGroup,
               currentStoryIndex >= 0 && currentStoryIndex < group.stories.count else { return nil }
         return group.stories[currentStoryIndex]
@@ -472,7 +469,7 @@ public struct StoryViewerModal: View {
         }
         .onReceive(timer) { _ in
             guard !isPaused, currentStory != nil else { return }
-            let step = 0.05 / storyDuration
+            let step = 0.05 / currentStoryDuration
             if progress + step >= 1.0 {
                 progress = 1.0
                 nextStory()
@@ -485,9 +482,9 @@ public struct StoryViewerModal: View {
     // MARK: - Story Content View
     
     @ViewBuilder
-    private func storyContentView(story: StoryItem, size: CGSize) -> some View {
+    private func storyContentView(story: Story, size: CGSize) -> some View {
         ZStack {
-            if let mediaUrl = story.mediaUrl, let url = URL(string: mediaUrl) {
+            if let url = URL(string: story.mediaUrl) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
@@ -538,9 +535,9 @@ public struct StoryViewerModal: View {
         }
     }
     
-    private func gradientBackdrop(story: StoryItem) -> some View {
+    private func gradientBackdrop(story: Story) -> some View {
         LinearGradient(
-            colors: story.gradientColors,
+            colors: story.backgroundColors,
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
@@ -579,24 +576,36 @@ public struct StoryViewerModal: View {
     
     // MARK: - Header View
     
-    private func headerView(group: UserStoryGroup, story: StoryItem) -> some View {
+    private func headerView(group: UserStory, story: Story) -> some View {
         HStack(spacing: 10) {
             StoryAvatarView(
-                username: group.username,
-                avatarUrl: group.avatarUrl,
+                username: group.user.username,
+                avatarUrl: group.user.avatarUrl,
                 isSeen: false,
                 hasRing: false,
                 size: 34
             )
             
-            HStack(spacing: 6) {
-                Text(group.isCurrentUser ? "Your story" : group.username)
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .foregroundColor(.white)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(group.isSelf ? "Your story" : group.user.username)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundColor(.white)
+                    
+                    Text(story.timeAgo.isEmpty ? story.createdAt : story.timeAgo)
+                        .font(.system(size: 12.5, weight: .regular))
+                        .foregroundColor(.white.opacity(0.7))
+                }
                 
-                Text(story.timeAgo)
-                    .font(.system(size: 12.5, weight: .regular))
-                    .foregroundColor(.white.opacity(0.7))
+                if let location = story.locationName {
+                    HStack(spacing: 3) {
+                        Image(systemName: "mappin.and.ellipse")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(location)
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundColor(.white.opacity(0.9))
+                }
             }
             
             Spacer()
@@ -739,7 +748,7 @@ public struct StoryViewerModal: View {
     
     private func markCurrentGroupAsSeen() {
         guard currentGroupIndex >= 0 && currentGroupIndex < storyGroups.count else { return }
-        storyGroups[currentGroupIndex].isSeen = true
+        onMarkAsSeen?(storyGroups[currentGroupIndex])
     }
 }
 
@@ -752,4 +761,31 @@ private struct FloatingHeart: Identifiable {
     var size: CGFloat
     var opacity: Double
     var scale: CGFloat
+}
+
+extension Color {
+    init(hex: String) {
+        let hex = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "#", with: "")
+        var rgb: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&rgb)
+
+        let r, g, b, a: Double
+        switch hex.count {
+        case 6: // RGB (24-bit)
+            r = Double((rgb >> 16) & 0xFF) / 255
+            g = Double((rgb >> 8) & 0xFF) / 255
+            b = Double(rgb & 0xFF) / 255
+            a = 1.0
+        case 8: // ARGB (32-bit)
+            a = Double((rgb >> 24) & 0xFF) / 255
+            r = Double((rgb >> 16) & 0xFF) / 255
+            g = Double((rgb >> 8) & 0xFF) / 255
+            b = Double(rgb & 0xFF) / 255
+        default:
+            r = 0; g = 0; b = 0; a = 1.0
+        }
+
+        self.init(red: r, green: g, blue: b, opacity: a)
+    }
 }

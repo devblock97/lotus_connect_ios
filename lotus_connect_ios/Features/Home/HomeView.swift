@@ -15,10 +15,15 @@ public struct HomeFeature {
     public struct State: Equatable {
         public var feeds: IdentifiedArrayOf<Post> = []
         public var isLoading: Bool = false
+        public var isStoriesLoading: Bool = false
+        public var storyGroups: [UserStory] = []
         public var errorMessage: String?
+        public var selectedGroupIndex: Int = 0
+        public var isViewerPresented: Bool = false
         
-        public init(feeds: [Post] = []) {
+        public init(feeds: [Post] = [], storyGroups: [UserStory] = []) {
             self.feeds = IdentifiedArray(uniqueElements: feeds)
+            self.storyGroups = storyGroups
         }
     }
     
@@ -26,11 +31,16 @@ public struct HomeFeature {
         case binding(BindingAction<State>)
         case onAppear
         case feedsLoaded(TaskResult<[Post]>)
+        case storiesLoaded(TaskResult<[UserStory]>)
+        case storyTrayItemTapped(UserStory)
+        case storyViewerDismissed
+        case addStoryTapped
     }
     
     public init() {}
     
     @Dependency(\.feedClient) var feedClient
+    @Dependency(\.storyClient) var storyClient
     
     public var body: some Reducer<State, Action> {
         BindingReducer()
@@ -38,12 +48,32 @@ public struct HomeFeature {
             switch action {
             case .onAppear:
                 state.isLoading = true
+                state.isStoriesLoading = true
                 state.errorMessage = nil
-                return .run { send in
-                    await send(.feedsLoaded(TaskResult {
-                        try await feedClient.getFeed()
-                    }))
-                }
+                
+                return .merge(
+                    .run { send in
+                        await send(.feedsLoaded(TaskResult {
+                            try await feedClient.getFeed()
+                        }))
+                    },
+                    .run { send in
+                        await send(.storiesLoaded(TaskResult {
+                            try await storyClient.getStories()
+                        }))
+                    }
+                )
+                
+            case let .storiesLoaded(.success(stories)):
+                state.isStoriesLoading = false
+                state.storyGroups = stories
+                return .none
+                
+            case .storiesLoaded(.failure):
+                state.isStoriesLoading = false
+                return .none
+                
+            
                 
             case let .feedsLoaded(.success(feeds)):
                 state.isLoading = false
@@ -55,7 +85,21 @@ public struct HomeFeature {
                 state.errorMessage = error.localizedDescription
                 return .none
                 
-            case .binding:
+            case let .storyTrayItemTapped(group):
+                if let index = state.storyGroups.firstIndex(where: { $0.id == group.id }) {
+                    state.selectedGroupIndex = index
+                    state.isViewerPresented = true
+                }
+                return .none
+                
+            case .storyViewerDismissed:
+                state.isViewerPresented = false
+                return .none
+                
+            case .addStoryTapped:
+                return .none
+                
+            case .binding, .feedsLoaded:
                 return .none
             }
         }
@@ -68,69 +112,6 @@ public struct HomeView: View {
     public init(store: StoreOf<HomeFeature>) {
         self.store = store
     }
-    
-    @State private var storyGroups: [UserStoryGroup] = [
-        UserStoryGroup(
-            username: "Your story",
-            avatarUrl: nil,
-            stories: [],
-            isSeen: false,
-            isCurrentUser: true
-        ),
-        UserStoryGroup(
-            username: "nnthong",
-            avatarUrl: nil,
-            stories: [
-                StoryItem(
-                    mediaUrl: "https://images.unsplash.com/photo-1518770660439-4636190af475?w=800&auto=format&fit=crop&q=80",
-                    caption: "iOS Engineering Mode 💻⚡️",
-                    timeAgo: "2h",
-                    gradientColors: [.purple, .indigo]
-                )
-            ],
-            isSeen: false
-        ),
-        UserStoryGroup(
-            username: "marvel",
-            avatarUrl: nil,
-            stories: [
-                StoryItem(
-                    mediaUrl: "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=800&auto=format&fit=crop&q=80",
-                    caption: "New Avengers Teaser 💥🛡️",
-                    timeAgo: "3h",
-                    gradientColors: [.red, .orange]
-                )
-            ],
-            isSeen: false
-        ),
-        UserStoryGroup(
-            username: "thekamraan",
-            avatarUrl: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80",
-            stories: [
-                StoryItem(
-                    caption: "Architecture & Design 🏛️☕️",
-                    timeAgo: "4h",
-                    gradientColors: [.indigo, .blue]
-                )
-            ],
-            isSeen: false
-        ),
-        UserStoryGroup(
-            username: "tva_official",
-            avatarUrl: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=200&auto=format&fit=crop&q=80",
-            stories: [
-                StoryItem(
-                    caption: "For all time. Always. ⏳",
-                    timeAgo: "7h",
-                    gradientColors: [.brown, .orange]
-                )
-            ],
-            isSeen: false
-        )
-    ]
-    
-    @State private var selectedGroupIndex: Int = 0
-    @State private var isViewerPresented: Bool = false
     
     private var activeFeeds: [Post] {
         store.feeds.isEmpty ? [] : Array(store.feeds)
@@ -172,18 +153,17 @@ public struct HomeView: View {
             ScrollView {
                 LazyVStack(spacing: 16) {
                     // Stories Tray Row
-                    StoriesTrayView(
-                        storyGroups: $storyGroups,
-                        onSelectGroup: { group in
-                            if let index = storyGroups.firstIndex(where: { $0.id == group.id }) {
-                                selectedGroupIndex = index
-                                isViewerPresented = true
+                    if !store.storyGroups.isEmpty {
+                        StoriesTrayView(
+                            storyGroups: store.storyGroups,
+                            onSelectGroup: { group in
+                                store.send(.storyTrayItemTapped(group))
+                            },
+                            onAddStoryTapped: {
+                                store.send(.addStoryTapped)
                             }
-                        },
-                        onAddStoryTapped: {
-                            print("Open camera to add story")
-                        }
-                    )
+                        )
+                    }
                     
                     if store.isLoading && store.feeds.isEmpty {
                         ProgressView("Loading Feed...")
@@ -198,12 +178,12 @@ public struct HomeView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
-        .fullScreenCover(isPresented: $isViewerPresented) {
+        .fullScreenCover(isPresented: $store.isViewerPresented) {
             StoryViewerModal(
-                storyGroups: $storyGroups,
-                initialGroupIndex: selectedGroupIndex,
+                storyGroups: store.storyGroups,
+                initialGroupIndex: store.selectedGroupIndex,
                 onDismiss: {
-                    isViewerPresented = false
+                    store.send(.storyViewerDismissed)
                 }
             )
         }
