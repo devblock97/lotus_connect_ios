@@ -1,9 +1,11 @@
 # Lotus Connect (iOS)
 
 <p align="center">
-  <img src="docs/screenshots/home_screen_dark.png" alt="Lotus Connect Home Screen (Dark Mode)" width="320"/>
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/screenshots/home_screen.png" alt="Lotus Connect Home Screen (Light Mode)" width="320"/>
+  <img src="docs/screenshots/home_screen_dark.png" alt="Lotus Connect Home Screen (Dark Mode)" width="260"/>
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/home_screen.png" alt="Lotus Connect Home Screen (Light Mode)" width="260"/>
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/story_screen.png" alt="Lotus Connect Full-Screen Story Viewer" width="260"/>
 </p>
 
 <p align="center">
@@ -25,9 +27,10 @@
 
 ## 📱 Screenshots
 
-| Home & Stories (Dark) | Home & Stories (Light) |
-|:---:|:---:|
-| <img src="docs/screenshots/home_screen_dark.png" width="260"/> | <img src="docs/screenshots/home_screen.png" width="260"/> |
+| Home Feed (Dark) | Home Feed (Light) | Full-Screen Story Player |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/home_screen_dark.png" width="260"/> | <img src="docs/screenshots/home_screen.png" width="260"/> | <img src="docs/screenshots/story_screen.png" width="260"/> |
+
 ---
 
 ## 🏗️ Architecture & Tech Stack

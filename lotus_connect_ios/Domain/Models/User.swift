@@ -12,6 +12,7 @@ nonisolated public struct User: Identifiable, Equatable, Codable, Sendable {
     public var username: String
     public var email: String
     public var fullName: String?
+    public var avatarUrl: String?
     public var friendshipStatus: String?
     public var friendshipSenderId: String?
     
@@ -20,6 +21,7 @@ nonisolated public struct User: Identifiable, Equatable, Codable, Sendable {
         username: String,
         email: String,
         fullName: String? = nil,
+        avatarUrl: String? = nil,
         friendshipStatus: String? = nil,
         friendshipSenderId: String? = nil,
     ) {
@@ -27,6 +29,7 @@ nonisolated public struct User: Identifiable, Equatable, Codable, Sendable {
         self.username = username
         self.email = email
         self.fullName = fullName
+        self.avatarUrl = avatarUrl
         self.friendshipStatus = friendshipStatus
         self.friendshipSenderId = friendshipSenderId
     }
