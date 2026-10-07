@@ -15,21 +15,15 @@
 
 ---
 
-## 🌟 Highlights
-
-- **Instagram-Grade Stories**: Interactive horizontal story tray with custom gradient rings, negative-space gaps, and a full-screen story player with segmented progress bars (auto-advancing, tap to skip, long-press to pause, and interactive drag-down dismiss).
-- **Rich Media Feeds**: Multi-image horizontal post carousels with swipeable page indicators, floating counters (`1/4`), double-tap likes, and author badges.
-- **Real-Time Messaging**: WebSocket-powered chat with instant bi-directional messaging, live typing indicators, message edits, and deletions.
-- **Friend & Contact Management**: Segmented contact directory featuring alphabetical indexation, pending connection requests, and live debounced user search.
-- **Architectural Purity**: Built entirely upon TCA 1.26+ conventions using `@ObservableState`, scoped reducers, isolated side-effects, and dependency injection.
-
----
-
 ## 📱 Screenshots
 
 | Home Feed (Dark) | Home Feed (Light) | Full-Screen Story Player |
 |:---:|:---:|:---:|
 | <img src="docs/screenshots/home_screen_dark.png" width="260"/> | <img src="docs/screenshots/home_screen.png" width="260"/> | <img src="docs/screenshots/story_screen.png" width="260"/> |
+
+| Contacts |
+|:---:|
+| <img src="docs/screenshots/contacts_screen.png" width="260"/>   |
 
 ---
 

@@ -21,15 +21,21 @@ nonisolated private struct FriendRequestDTO: Encodable, Sendable {
     }
 }
 
+nonisolated private struct SendFriendRequestByUsernameDTO: Encodable, Sendable {
+    let username: String
+}
+
 @DependencyClient
 public struct ContactsClient: Sendable {
     public var fetchContacts: @Sendable () async throws -> [User]
     public var fetchPendingRequests: @Sendable () async throws -> [User]
+    public var fetchCallHistory: @Sendable () async throws -> [CallLog] = { [] }
     public var removeFriend: @Sendable (_ userId: String) async throws -> Void
     public var acceptFriendRequest: @Sendable (_ userId: String) async throws -> Void
     public var rejectFriendRequest: @Sendable (_ userId: String) async throws -> Void
     public var searchUsers: @Sendable (_ query: String) async throws -> [User]
     public var sendFriendRequest: @Sendable (_ userId: String) async throws -> Void
+    public var sendFriendRequestByUsername: @Sendable (_ username: String) async throws -> Void
 }
 
 extension ContactsClient: DependencyKey {
@@ -45,6 +51,14 @@ extension ContactsClient: DependencyKey {
                 let pending: [User] = try await httpClient.request("/users/friends/requests", .get, nil, nil)
                 return pending
             },
+            fetchCallHistory: {
+                do {
+                    let logs: [CallLog] = try await httpClient.request("/calls/history", .get, nil, nil)
+                    return logs
+                } catch {
+                    return []
+                }
+            },
             removeFriend: { userId in
                 let _: EmptyDTO = try await httpClient.request("/users/friends/\(userId)", .delete, nil, nil)
             },
@@ -53,7 +67,7 @@ extension ContactsClient: DependencyKey {
                 let _: EmptyDTO = try await httpClient.request("/users/friends/accept", .post, dto, nil)
             },
             rejectFriendRequest: { userId in
-                    let dto = FriendRequestDTO(targetUserId: userId)
+                let dto = FriendRequestDTO(targetUserId: userId)
                 let _: EmptyDTO = try await httpClient.request("/users/friends/reject", .post, dto, nil)
             },
             searchUsers: { query in
@@ -64,6 +78,10 @@ extension ContactsClient: DependencyKey {
             sendFriendRequest: { userId in
                 let dto = FriendRequestDTO(targetUserId: userId)
                 let _: EmptyDTO = try await httpClient.request("/users/friends/request", .post, dto, nil)
+            },
+            sendFriendRequestByUsername: { username in
+                let dto = SendFriendRequestByUsernameDTO(username: username)
+                let _: EmptyDTO = try await httpClient.request("/users/friends", .post, dto, nil)
             }
         )
     }()
